@@ -256,3 +256,55 @@ class SourceGenerationService:
             "format": format,
             "history_id": history.id,
         }
+
+    # ========================================================================
+    # Text-to-Mindmap (no source required)
+    # ========================================================================
+
+    async def generate_mindmap_from_text(
+        self,
+        text: str,
+        user_id: str,
+        format: str = "json",
+    ) -> Dict[str, Any]:
+        """
+        Generate a mindmap directly from freeform text — no source needed.
+        Satisfies the 'Text-to-Mindmap' feature in FEATURES.md.
+
+        Args:
+            text: Raw concept or description to map
+            user_id: User requesting the mindmap
+            format: Output format ('json', 'markdown', 'mermaid')
+
+        Returns:
+            Dict with mindmap, format, and history_id
+        """
+        if not text or not text.strip():
+            raise ValidationError("text must not be empty")
+
+        mindmap = await self.llm_client.generate_mindmap(
+            content=text,
+            format=format,
+        )
+
+        mindmap_content = json.dumps(mindmap) if isinstance(mindmap, dict) else str(mindmap)
+        history = await self.history_repo.create(
+            user_id=user_id,
+            history_type="mindmap",
+            title="Text-to-Mindmap",
+            content=mindmap_content,
+            content_preview=mindmap_content[:200] if mindmap_content else "",
+            resource_id=None,
+            notebook_id=None,
+            metadata={"format": format, "source": "text_prompt"},
+        )
+
+        logger.info(f"Text-to-Mindmap generated for user {user_id}")
+        return {
+            "mindmap": mindmap,
+            "source_id": None,
+            "source_title": None,
+            "format": format,
+            "history_id": history.id,
+        }
+

@@ -19,7 +19,7 @@ class Message(Base):
     conversation_id: Mapped[str] = mapped_column(PG_UUID(as_uuid=False), ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False)
     role: Mapped[str] = mapped_column(String(50), nullable=False)  # 'user', 'assistant', 'system'
     content: Mapped[str] = mapped_column(Text, nullable=False)
-    chunk_ids: Mapped[list[str]] = mapped_column(ARRAY(String), default=list)  # Array of chunk IDs for RAG
+    chunk_ids: Mapped[list[str]] = mapped_column(ARRAY(PG_UUID(as_uuid=False)), default=list)  # Array of chunk IDs for RAG
     metadata_: Mapped[dict] = mapped_column(JSONB, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     

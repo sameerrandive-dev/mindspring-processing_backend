@@ -176,7 +176,7 @@ class ChatService:
             conversation_id=conversation_id,
             role=role,
             content=content,
-            chunk_ids_array=chunk_ids or [],
+            chunk_ids=chunk_ids or [],
             metadata=metadata or {},
         )
         
@@ -358,26 +358,47 @@ Answer based on the provided context. If the answer is not in the context, say s
     ) -> Message:
         """
         Send user message and get AI response using only conversation history.
-        This is used for general AI assistance (Syntra).
+        Picks a mode-specific system prompt based on conversation.mode (Gap 3).
         """
         conversation = await self.get_conversation(conversation_id, user_id)
         previous_messages = await self.get_conversation_messages(
             conversation_id, user_id, limit=limit
         )
-        
-        messages_for_llm = []
-        system_prompt = (
-            "You are Syntra, a helpful and intelligent AI learning assistant. "
-            "Your goal is to help the user learn and understand complex topics. "
-            "Explain concepts clearly, provide examples, and be encouraging."
-        )
-        messages_for_llm.append({"role": "system", "content": system_prompt})
-        
+
+        # ---- Mode-specific system prompts (Syntra Modes feature) -----------
+        SYNTRA_PROMPTS = {
+            "tutor": (
+                "You are Syntra in Tutor Mode. Break down complex topics step by step. "
+                "Use analogies, relatable examples, and Socratic questioning to guide the "
+                "user toward understanding. Celebrate progress and encourage critical thinking."
+            ),
+            "fact-checker": (
+                "You are Syntra in Fact-Checker Mode. Verify claims rigorously. "
+                "Clearly separate confirmed facts from opinions or uncertain claims. "
+                "Flag anything unverifiable and always note the basis for your assessment."
+            ),
+            "brainstormer": (
+                "You are Syntra in Brainstormer Mode. Generate creative ideas, alternatives, "
+                "and unexpected angles on the topic. Think laterally, challenge assumptions, "
+                "and encourage the user to explore bold possibilities."
+            ),
+            "chat": (
+                "You are Syntra, a helpful and intelligent AI learning assistant. "
+                "Your goal is to help the user learn and understand complex topics. "
+                "Explain concepts clearly, provide examples, and be encouraging."
+            ),
+        }
+        DEFAULT_PROMPT = SYNTRA_PROMPTS["chat"]
+        system_prompt = SYNTRA_PROMPTS.get(conversation.mode or "chat", DEFAULT_PROMPT)
+        # --------------------------------------------------------------------
+
+        messages_for_llm = [{"role": "system", "content": system_prompt}]
+
         for msg in previous_messages:
             messages_for_llm.append({"role": msg.role, "content": msg.content})
-            
+
         messages_for_llm.append({"role": "user", "content": user_message})
-        
+
         try:
             assistant_response = await llm_client.generate_chat_response(
                 messages=messages_for_llm,
@@ -386,15 +407,16 @@ Answer based on the provided context. If the answer is not in the context, say s
         except Exception as e:
             logger.error(f"Syntra generation failed: {e}")
             assistant_response = "I apologize, but I'm having trouble thinking right now."
-            
+
         await self.add_message(conversation_id=conversation_id, user_id=user_id, role="user", content=user_message)
-        
+
         assistant_msg = await self.add_message(
             conversation_id=conversation_id,
             user_id=user_id,
             role="assistant",
             content=assistant_response,
-            metadata={"source": "syntra_contextual"}
+            metadata={"source": "syntra_contextual", "mode": conversation.mode or "chat"},
         )
-        
+
         return assistant_msg
+

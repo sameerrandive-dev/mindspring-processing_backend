@@ -75,16 +75,51 @@ class SummaryResponse(BaseModel):
 
 class MindmapResponse(BaseModel):
     mindmap: dict
-    source_id: str
-    source_title: str
+    source_id: Optional[str] = None
+    source_title: Optional[str] = None
     format: str
     history_id: str
 
 
+class TextMindmapRequest(BaseModel):
+    text: str
+    format: str = "json"
+
+    @field_validator("format")
+    @classmethod
+    def validate_format(cls, v: str) -> str:
+        allowed = {"json", "mermaid", "markdown"}
+        if v.lower() not in allowed:
+            raise ValueError(f"format must be one of {allowed}")
+        return v.lower()
+
+
+ALLOWED_QUESTION_COUNTS = {10, 20, 30, 40, 50}
+ALLOWED_DIFFICULTIES = {"novice", "intermediate", "master", "easy", "medium", "hard"}
+
+
 class QuizGenerateRequest(BaseModel):
     topic: str
-    num_questions: int = 5
-    difficulty: str = "medium"
+    num_questions: int = 10
+    difficulty: str = "intermediate"
+
+    @field_validator("num_questions")
+    @classmethod
+    def validate_num_questions(cls, v: int) -> int:
+        if v not in ALLOWED_QUESTION_COUNTS:
+            raise ValueError(
+                f"num_questions must be one of {sorted(ALLOWED_QUESTION_COUNTS)}"
+            )
+        return v
+
+    @field_validator("difficulty")
+    @classmethod
+    def validate_difficulty(cls, v: str) -> str:
+        if v.lower() not in ALLOWED_DIFFICULTIES:
+            raise ValueError(
+                f"difficulty must be one of {ALLOWED_DIFFICULTIES}"
+            )
+        return v.lower()
 
 
 class StudyGuideGenerateRequest(BaseModel):
@@ -563,4 +598,92 @@ async def create_source_conversation(
     except Exception as e:
         await db.rollback()
         logger.error(f"Unexpected error in create_source_conversation: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+# ============================================================================
+# Gap 4: Text-to-Mindmap (no source required)
+# ============================================================================
+
+@router.post("/mindmap/generate", response_model=MindmapResponse)
+async def generate_mindmap_from_text(
+    request: TextMindmapRequest,
+    current_user: User = Depends(get_current_user),
+    service = Depends(get_source_generation_service),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """
+    Generate a mindmap from freeform text — no source needed.
+    
+    Send any concept or description and receive a structured mindmap
+    in JSON, Mermaid, or Markdown format.
+    """
+    try:
+        result = await service.generate_mindmap_from_text(
+            text=request.text,
+            user_id=current_user.id,
+            format=request.format,
+        )
+        await db.commit()
+        return MindmapResponse(**result)
+    except DomainError as e:
+        await db.rollback()
+        e.log(logger)
+        raise HTTPException(status_code=e.http_status_code, detail=e.message)
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"Unexpected error in generate_mindmap_from_text: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+# ============================================================================
+# Gap 5: Interactive Node Threading — create a conversation from a mindmap node
+# ============================================================================
+
+@router.post("/mindmap-node/conversations")
+async def create_node_conversation(
+    notebook_id: str,
+    node_id: str,
+    node_label: str,
+    history_id: str,
+    title: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
+    chat_service = Depends(get_chat_service),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """
+    Create a focused conversation thread anchored to a specific mindmap node.
+
+    The node label becomes the initial topic context and the conversation
+    is set to 'tutor' mode for in-depth learning about that concept.
+    The history_id links this thread back to the parent mindmap.
+    """
+    try:
+        conversation = await chat_service.create_conversation(
+            notebook_id=notebook_id,
+            user_id=current_user.id,
+            title=title or f"Exploring: {node_label}",
+            mode="tutor",
+            source_id=None,
+        )
+        await db.commit()
+        await db.refresh(conversation)
+
+        return {
+            "id": conversation.id,
+            "notebook_id": conversation.notebook_id,
+            "node_id": node_id,
+            "node_label": node_label,
+            "mindmap_history_id": history_id,
+            "mode": conversation.mode,
+            "title": conversation.title,
+            "created_at": conversation.created_at.isoformat(),
+        }
+    except DomainError as e:
+        await db.rollback()
+        e.log(logger)
+        raise HTTPException(status_code=e.http_status_code, detail=e.message)
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"Unexpected error in create_node_conversation: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")

@@ -18,11 +18,11 @@ class ConversationRepository:
     
     async def create(
         self,
-        notebook_id: int,
-        user_id: int,
+        notebook_id: str,
+        user_id: str,
         title: str,
         mode: str = "assistant",
-        source_id: Optional[int] = None,
+        source_id: Optional[str] = None,
     ) -> Conversation:
         """Create a new conversation."""
         conversation = Conversation(
@@ -36,7 +36,7 @@ class ConversationRepository:
         await self.db.flush()
         return conversation
     
-    async def get_by_id(self, conversation_id: int) -> Optional[Conversation]:
+    async def get_by_id(self, conversation_id: str) -> Optional[Conversation]:
         """Get conversation by ID."""
         result = await self.db.execute(
             select(Conversation)
@@ -47,8 +47,8 @@ class ConversationRepository:
     
     async def get_by_id_and_user(
         self,
-        conversation_id: int,
-        user_id: int,
+        conversation_id: str,
+        user_id: str,
     ) -> Optional[Conversation]:
         """Get conversation by ID checking user ownership."""
         result = await self.db.execute(
@@ -65,7 +65,7 @@ class ConversationRepository:
     
     async def list_by_notebook(
         self,
-        notebook_id: int,
+        notebook_id: str,
         skip: int = 0,
         limit: int = 100,
     ) -> List[Conversation]:
@@ -80,7 +80,7 @@ class ConversationRepository:
         )
         return result.scalars().all()
     
-    async def update(self, conversation_id: int, **updates) -> Conversation:
+    async def update(self, conversation_id: str, **updates) -> Conversation:
         """Update conversation fields."""
         conversation = await self.get_by_id(conversation_id)
         if not conversation:
@@ -97,7 +97,7 @@ class ConversationRepository:
         await self.db.flush()
         return conversation
     
-    async def delete(self, conversation_id: int) -> bool:
+    async def delete(self, conversation_id: str) -> bool:
         """Delete conversation (cascade deletes messages)."""
         conversation = await self.get_by_id(conversation_id)
         if not conversation:
@@ -116,10 +116,10 @@ class MessageRepository:
     
     async def create(
         self,
-        conversation_id: int,
+        conversation_id: str,
         role: str,
         content: str,
-        chunk_ids_array: Optional[List[int]] = None,
+        chunk_ids: Optional[List[str]] = None,
         metadata: Optional[dict] = None,
     ) -> Message:
         """Create a new message."""
@@ -127,21 +127,21 @@ class MessageRepository:
             conversation_id=conversation_id,
             role=role,
             content=content,
-            chunk_ids_array=chunk_ids_array or [],
-            metadata=metadata or {},
+            chunk_ids=chunk_ids or [],
+            metadata_=metadata or {},
         )
         self.db.add(message)
         await self.db.flush()
         return message
     
-    async def get_by_id(self, message_id: int) -> Optional[Message]:
+    async def get_by_id(self, message_id: str) -> Optional[Message]:
         """Get message by ID."""
         result = await self.db.execute(select(Message).where(Message.id == message_id))
         return result.scalar_one_or_none()
     
     async def list_by_conversation(
         self,
-        conversation_id: int,
+        conversation_id: str,
         skip: int = 0,
         limit: int = 100,
     ) -> List[Message]:
@@ -155,7 +155,7 @@ class MessageRepository:
         )
         return result.scalars().all()
     
-    async def delete(self, message_id: int) -> bool:
+    async def delete(self, message_id: str) -> bool:
         """Delete message."""
         message = await self.get_by_id(message_id)
         if not message:
@@ -165,7 +165,7 @@ class MessageRepository:
         await self.db.flush()
         return True
     
-    async def delete_by_conversation(self, conversation_id: int) -> None:
+    async def delete_by_conversation(self, conversation_id: str) -> None:
         """Delete all messages in a conversation."""
         result = await self.db.execute(
             select(Message).where(Message.conversation_id == conversation_id)

@@ -44,6 +44,23 @@ class RealLLMClient(ILLMClient):
         
         if not self.api_key:
             logger.warning("OPENAI_API_KEY not set - LLM calls will fail")
+
+    # -----------------------------------------------------------------------
+    # Difficulty mapping — supports FEATURES.md names and legacy aliases
+    # -----------------------------------------------------------------------
+    DIFFICULTY_MAP: Dict[str, str] = {
+        "novice":       "easy (introductory — core definitions and broad concepts)",
+        "intermediate": "intermediate (relationships between ideas, process-based questions)",
+        "master":       "advanced (deep inference, complex synthesis, expert-level reasoning)",
+        # legacy aliases
+        "easy":   "easy (introductory)",
+        "medium": "intermediate",
+        "hard":   "advanced",
+    }
+
+    def _resolve_difficulty(self, difficulty: str) -> str:
+        """Map user-facing difficulty label to a descriptive LLM prompt phrase."""
+        return self.DIFFICULTY_MAP.get(difficulty.lower(), difficulty)
     
     def _generate_cache_key(self, prefix: str, data: Any) -> str:
         """Generate cache key from data using MD5 hash."""
@@ -298,7 +315,8 @@ class RealLLMClient(ILLMClient):
         difficulty: str = "medium",
     ) -> List[Dict[str, Any]]:
         """Generate quiz questions from content."""
-        prompt = f"""Generate {num_questions} {difficulty} difficulty quiz questions based on the following content.
+        difficulty_label = self._resolve_difficulty(difficulty)
+        prompt = f"""Generate {num_questions} quiz questions at {difficulty_label} difficulty based on the following content.
 
 Content:
 {content[:4000]}  # Limit content length
