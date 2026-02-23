@@ -458,20 +458,251 @@ async def lifespan(app: FastAPI):
 
 ### Step 11: Verify Deployment
 
-1. Check the health endpoint:
+#### Option A: Access via Public URL (If Exposed)
+
+1. **Generate a Public Domain:**
+   - Go to your service in Railway dashboard
+   - Click on **"Settings"** tab
+   - Scroll to **"Networking"** section
+   - Click **"Generate Domain"** to create a public URL
+   - Your service will be accessible at: `https://your-service-name.railway.app`
+
+2. **Check the Health Endpoint:**
+   ```bash
+   curl https://your-service-name.railway.app/health
    ```
-   https://your-app.railway.app/health
+   Or open in browser: `https://your-service-name.railway.app/health`
+   
+   Should return: `{"status": "healthy", "service": "mindspring-fastapi-backend"}`
+
+3. **Check the API Documentation:**
+   - Interactive Swagger UI: `https://your-service-name.railway.app/docs`
+   - ReDoc: `https://your-service-name.railway.app/redoc`
+   - OpenAPI JSON: `https://your-service-name.railway.app/api/v1/openapi.json`
+
+#### Option B: Access via Private Network (No Public URL Required)
+
+If your service is **not publicly exposed**, you can still access and verify it using these methods:
+
+**Method 1: Using Railway CLI (Easiest)**
+
+1. **Install Railway CLI:**
+   ```bash
+   npm i -g @railway/cli
+   ```
+
+2. **Login to Railway:**
+   ```bash
+   railway login
+   ```
+
+3. **Link to your project:**
+   ```bash
+   railway link
+   # Select your project and service when prompted
+   ```
+
+4. **View logs in real-time:**
+   ```bash
+   railway logs
+   ```
+   This shows your application logs. Look for:
+   - `Application startup complete`
+   - `Uvicorn running on http://0.0.0.0:8000`
+   - No error messages
+
+5. **Connect to your service (creates a local tunnel):**
+   ```bash
+   railway connect
+   ```
+   This creates a local tunnel to your Railway service. Then test:
+   ```bash
+   # In another terminal, test the health endpoint
+   curl http://localhost:8000/health
    ```
    Should return: `{"status": "healthy", "service": "mindspring-fastapi-backend"}`
 
-2. Check the API docs:
+6. **Run commands in your service:**
+   ```bash
+   # Test database connection
+   railway run python -c "from app.core.config import settings; print(settings.DATABASE_URL)"
+   
+   # Run migrations
+   railway run alembic upgrade head
+   
+   # Run any Python script
+   railway run python your_script.py
    ```
-   https://your-app.railway.app/api/v1/openapi.json
+
+**Method 2: Using Railway Dashboard Logs**
+
+1. **View Real-time Logs:**
+   - Go to Railway dashboard
+   - Click on your service: `mindspring-processingbackend`
+   - Click **"Deployments"** tab
+   - Click on the latest deployment
+   - Click **"Logs"** tab
+   - You'll see real-time application logs
+
+2. **What to Look For:**
    ```
-   Or interactive docs:
+   INFO:     Started server process [1]
+   INFO:     Waiting for application startup.
+   INFO:     Application startup complete.
+   INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
    ```
-   https://your-app.railway.app/docs
+   If you see these messages, your service is running!
+
+3. **Check for Errors:**
+   - Look for red error messages
+   - Check for database connection errors
+   - Verify environment variables are loaded
+
+**Method 3: Access from Another Railway Service (Internal Network)**
+
+If you have another service in the same Railway project, you can access it:
+
+1. **Private Network Hostname:**
+   - Your service name: `mindspring-processingbackend`
+   - Full hostname: `mindspring-processingbackend.railway.internal`
+   - Port: Check your `PORT` environment variable (usually `8000`)
+
+2. **From Another Railway Service (Python example):**
+   ```python
+   import httpx
+   
+   # Using the private hostname
+   response = httpx.get("http://mindspring-processingbackend:8000/health")
+   print(response.json())
+   # Should return: {"status": "healthy", "service": "mindspring-fastapi-backend"}
    ```
+
+3. **From Another Railway Service (curl in a script):**
+   ```bash
+   # In a shell script or another service
+   curl http://mindspring-processingbackend:8000/health
+   ```
+
+**Method 4: Check Service Metrics**
+
+1. **In Railway Dashboard:**
+   - Go to your service
+   - Click **"Metrics"** tab
+   - You should see:
+     - CPU usage (should be > 0% if running)
+     - Memory usage
+     - Network traffic
+   - If metrics are showing activity, your service is definitely running!
+
+**Method 5: Verify Environment Variables**
+
+1. **Check Variables are Set:**
+   - Go to your service → **"Variables"** tab
+   - Verify all required variables exist:
+     - `DATABASE_URL`
+     - `REDIS_URL`
+     - `SECRET_KEY`
+     - `PORT` (automatically set by Railway)
+   - If variables are missing, add them and redeploy
+
+**Quick Verification Checklist (Without Public URL):**
+
+- [ ] Railway CLI `railway logs` shows "Application startup complete"
+- [ ] No error messages in the logs
+- [ ] Metrics tab shows CPU/Memory activity
+- [ ] Service status shows "Active" or "Running"
+- [ ] `railway connect` allows local access to health endpoint
+- [ ] All environment variables are set correctly
+
+#### Option C: Check Deployment Status in Railway Dashboard
+
+1. **View Deployment Status:**
+   - Go to your Railway project dashboard
+   - Click on your service (`mindspring-processingbackend`)
+   - Check the **"Deployments"** tab
+   - Look for a green checkmark ✅ indicating successful deployment
+
+2. **Check Service Logs:**
+   - Click on your service
+   - Go to **"Deployments"** tab
+   - Click on the latest deployment
+   - View **"Logs"** to see:
+     - Build logs (installation, compilation)
+     - Runtime logs (application startup, errors)
+     - Look for: `Application startup complete` or `Uvicorn running on`
+
+3. **Verify Service is Running:**
+   - In the service dashboard, check **"Metrics"** tab
+   - You should see:
+     - CPU usage
+     - Memory usage
+     - Network traffic
+   - If metrics are showing activity, your service is running!
+
+4. **Check Environment Variables:**
+   - Go to **"Variables"** tab
+   - Verify all required variables are set:
+     - `DATABASE_URL`
+     - `REDIS_URL`
+     - `SECRET_KEY`
+     - Other required configs
+
+#### Quick Verification Commands
+
+**If you have public URL:**
+```bash
+# Health check
+curl https://your-service-name.railway.app/health
+
+# API docs
+curl https://your-service-name.railway.app/docs
+
+# OpenAPI spec
+curl https://your-service-name.railway.app/api/v1/openapi.json
+```
+
+**If using Railway CLI:**
+```bash
+# View logs
+railway logs
+
+# Check status
+railway status
+
+# Connect to service
+railway connect
+```
+
+#### Common Issues When Checking Deployment
+
+1. **"Service not found" or 404:**
+   - Service might not be exposed publicly
+   - Generate a domain in Settings → Networking
+   - Or use private network hostname
+
+2. **"Connection refused":**
+   - Service might not be running
+   - Check deployment logs for errors
+   - Verify the start command is correct
+
+3. **"500 Internal Server Error":**
+   - Check application logs
+   - Verify environment variables are set
+   - Check database/Redis connections
+
+4. **Health endpoint returns error:**
+   - Check if database migrations ran
+   - Verify `DATABASE_URL` is correct
+   - Check application logs for specific errors
+
+5. **"Error: Invalid value for '--port': '$PORT' is not a valid integer":**
+   - **Problem**: The `$PORT` environment variable is not being expanded properly
+   - **Solution**: We've created a `start.sh` script that handles this correctly
+   - **Fix Applied**: 
+     - Updated `Dockerfile` to use `/app/start.sh` script
+     - Updated `Procfile` to use shell expansion: `sh -c "uvicorn ... --port ${PORT:-8000}"`
+   - **Verify**: After pushing the fix, Railway should automatically redeploy
+   - **Alternative**: If still having issues, you can also set PORT explicitly in Railway Variables tab (though Railway sets it automatically)
 
 ---
 
