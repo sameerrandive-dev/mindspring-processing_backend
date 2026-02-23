@@ -697,12 +697,22 @@ railway connect
 
 5. **"Error: Invalid value for '--port': '$PORT' is not a valid integer":**
    - **Problem**: The `$PORT` environment variable is not being expanded properly
-   - **Solution**: We've created a `start.sh` script that handles this correctly
-   - **Fix Applied**: 
+   - **Root Cause**: Railway might be using `railway.json`, Procfile, or Settings → Start Command, and `$PORT` needs shell expansion
+   - **Solution Applied**: 
+     - Created `start.sh` script that properly handles PORT variable
      - Updated `Dockerfile` to use `/app/start.sh` script
      - Updated `Procfile` to use shell expansion: `sh -c "uvicorn ... --port ${PORT:-8000}"`
-   - **Verify**: After pushing the fix, Railway should automatically redeploy
-   - **Alternative**: If still having issues, you can also set PORT explicitly in Railway Variables tab (though Railway sets it automatically)
+     - Updated `railway.json` to use `/app/start.sh` script
+   - **If Still Having Issues - Check Railway Settings**:
+     1. Go to your service → **Settings** → **Deploy** (or **Build** tab)
+     2. Look for **"Start Command"** field
+     3. It should be either:
+        - `/app/start.sh` (if using Dockerfile)
+        - `sh -c "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"` (if using Procfile)
+     4. **Remove or update** any Start Command that uses raw `$PORT` without shell expansion
+     5. **Save** and **Redeploy**
+   - **Verify**: After pushing the fix and updating settings, Railway should automatically redeploy
+   - **Alternative**: You can also manually set PORT in Railway Variables tab, but Railway sets it automatically
 
 ---
 
@@ -723,7 +733,8 @@ This error occurs when Railway can't automatically detect your build configurati
    - Go to your Railway service → **Settings** → **Build**
    - Manually set:
      - **Build Command**: `pip install -r requirements.txt`
-     - **Start Command**: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
+     - **Start Command**: `/app/start.sh` (if using Dockerfile) OR `sh -c "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"` (if using Procfile)
+   - **Important**: Make sure the Start Command uses shell expansion, not raw `$PORT`
    - Save and redeploy
 
 3. **Alternative: Use Dockerfile** (if above doesn't work):
