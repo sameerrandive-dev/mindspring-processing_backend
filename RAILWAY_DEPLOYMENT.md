@@ -778,7 +778,41 @@ This error means pip can't resolve dependencies due to version conflicts or unav
    docker build -t test-app .
    ```
 
-### Issue 3: Build Fails - "Module not found" or compilation errors
+### Issue 3: Runtime Error - "ModuleNotFoundError: No module named 'X'"
+
+**Solution:**
+This error occurs when your application tries to import a package that's not in `requirements.txt`.
+
+1. **Identify the missing package:**
+   - Check the error message: `ModuleNotFoundError: No module named 'pythonjsonlogger'`
+   - The package name is usually clear from the error
+
+2. **Add to requirements.txt:**
+   ```bash
+   # Add the missing package
+   echo "pythonjsonlogger==2.0.7" >> requirements.txt
+   ```
+   Or manually add it to `requirements.txt`:
+   ```
+   pythonjsonlogger==2.0.7
+   ```
+
+3. **Common missing packages:**
+   - `pythonjsonlogger` - For JSON logging
+   - `bcrypt` - For password hashing (usually comes with passlib)
+   - `cryptography` - For encryption (usually comes with python-jose)
+   - Check your imports in code to find all dependencies
+
+4. **Prevent this issue:**
+   - Before deploying, test locally: `pip install -r requirements.txt`
+   - Run your app locally to catch missing imports
+   - Use `pip freeze > requirements.txt` to capture all installed packages (but be careful with versions)
+
+5. **After adding the package:**
+   - Commit and push: `git add requirements.txt && git commit -m "Add missing package" && git push`
+   - Railway will automatically rebuild
+
+### Issue 4: Build Fails - "Module not found" or compilation errors
 
 **Solution:**
 - Make sure `requirements.txt` is in your project root
