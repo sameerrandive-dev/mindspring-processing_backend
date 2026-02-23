@@ -25,4 +25,4 @@ tiktoken==0.8.0
 openai==1.52.2
 numpy==1.26.4
 httpx==0.27.0
-pythonjsonlogger==2.0.7
+pythonjsonlogger
