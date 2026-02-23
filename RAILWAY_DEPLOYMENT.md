@@ -9,6 +9,146 @@ Before you begin, make sure you have:
 - A Railway account (sign up at [railway.app](https://railway.app))
 - Your project code pushed to a Git repository (GitHub recommended)
 - Basic understanding of environment variables
+- **Docker installed** (for local testing - [Download Docker](https://www.docker.com/get-started))
+
+---
+
+## 🧪 Local Testing (Recommended Before Deployment)
+
+**Why test locally first?** Testing your Docker build locally helps you:
+- Catch build errors quickly (seconds vs minutes)
+- Save time and avoid failed Railway deployments
+- Debug issues more easily with full error messages
+- Ensure everything works before deploying
+
+### Step 1: Build the Docker Image Locally
+
+```bash
+# Navigate to your project directory
+cd path/to/mindspring-fastapi
+
+# Build the Docker image
+docker build -t mindspring-fastapi:test .
+```
+
+**What to check:**
+- ✅ Build completes without errors
+- ✅ All Python packages install successfully
+- ✅ No "ResolutionImpossible" or dependency conflicts
+- ✅ You see "Successfully built" at the end
+
+**If the build fails:**
+- Check the error message - it will tell you which package or step failed
+- Fix the issue in your `requirements.txt` or `Dockerfile`
+- Rebuild: `docker build -t mindspring-fastapi:test .`
+
+### Step 2: Test Run the Container (Optional)
+
+To fully test, you'll need environment variables. Create a test `.env` file or pass them directly:
+
+```bash
+# Simple test run (just to see if it starts)
+docker run --rm -p 8000:8000 \
+  -e PORT=8000 \
+  -e DATABASE_URL="postgresql://user:pass@host:5432/db" \
+  -e REDIS_URL="redis://localhost:6379" \
+  -e SECRET_KEY="test-secret-key-for-local-testing" \
+  mindspring-fastapi:test
+```
+
+**Or use Docker Compose** (easier for full testing):
+
+Create a `docker-compose.test.yml` file:
+
+```yaml
+version: '3.8'
+
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://user:password@postgres:5432/mindspring
+      - REDIS_URL=redis://redis:6379
+      - SECRET_KEY=test-secret-key-change-in-production
+      - PORT=8000
+      - DEBUG=True
+    depends_on:
+      - postgres
+      - redis
+
+  postgres:
+    image: postgres:15
+    environment:
+      - POSTGRES_DB=mindspring
+      - POSTGRES_USER=user
+      - POSTGRES_PASSWORD=password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+volumes:
+  postgres_data:
+```
+
+Then run:
+```bash
+docker-compose -f docker-compose.test.yml up --build
+```
+
+### Step 3: Verify the Application Works
+
+Once the container is running:
+
+1. **Check health endpoint:**
+   ```bash
+   curl http://localhost:8000/health
+   ```
+   Should return: `{"status": "healthy", "service": "mindspring-fastapi-backend"}`
+
+2. **Check API documentation:**
+   Open in browser: `http://localhost:8000/docs`
+
+3. **Check logs:**
+   ```bash
+   docker logs <container-id>
+   ```
+   Or if using docker-compose:
+   ```bash
+   docker-compose -f docker-compose.test.yml logs app
+   ```
+
+### Step 4: Clean Up After Testing
+
+```bash
+# Stop and remove containers
+docker-compose -f docker-compose.test.yml down
+
+# Or for single container
+docker stop <container-id>
+docker rm <container-id>
+
+# Remove test image (optional)
+docker rmi mindspring-fastapi:test
+```
+
+### ✅ Local Testing Checklist
+
+Before deploying to Railway, make sure:
+- [ ] Docker build completes successfully
+- [ ] All dependencies install without conflicts
+- [ ] Container starts without crashes
+- [ ] Health endpoint responds correctly
+- [ ] No critical errors in logs
+
+**Once all checks pass, you're ready to deploy to Railway!**
 
 ---
 
@@ -375,15 +515,25 @@ This error means pip can't resolve dependencies due to version conflicts or unav
    - Example: Changed `opentelemetry-instrumentation-fastapi==0.50b0` to `opentelemetry-instrumentation-fastapi>=0.45.0,<1.0.0`
    - Remove unused packages that aren't actually imported in your code
 
-3. **Update build tools in Dockerfile:**
+3. **Common conflicts and fixes:**
+   - **boto3 and aioboto3 conflict**: 
+     - Problem: `boto3==1.35.0` requires `botocore>=1.35.0`, but `aiobotocore==2.13.0` (from `aioboto3==13.0.0`) requires `botocore<1.34.107`
+     - Solution: Use `boto3>=1.34.0,<1.35.0` and `aioboto3>=13.0.0` to allow compatible versions
+   - **OpenTelemetry beta versions**: Use flexible version ranges instead of exact beta versions
+
+4. **Update build tools in Dockerfile:**
    ```dockerfile
    RUN pip install --no-cache-dir --upgrade pip setuptools wheel
    ```
    This ensures you have the latest dependency resolver.
 
-4. **Test locally first:**
+5. **Test locally first:**
    ```bash
    pip install -r requirements.txt
+   ```
+   Or test with Docker:
+   ```bash
+   docker build -t test-app .
    ```
 
 ### Issue 3: Build Fails - "Module not found" or compilation errors
