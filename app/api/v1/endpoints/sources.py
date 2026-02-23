@@ -254,14 +254,16 @@ async def add_source_to_notebook(
                 
                 # Background task closure
                 async def process_task(sid=source_id, skey=storage_key):
+                    logger.info(f"🚀 Bulk processing task started for source {sid}")
                     async with AsyncSessionFactory() as bg_db:
                         try:
                             bg_container = ServiceContainer(db=bg_db)
                             svc = bg_container.get_source_processing_service()
                             await svc.process_source_file(source_id=sid, storage_key=skey)
                             await bg_db.commit()
+                            logger.info(f"🎉 Bulk processing completed for source {sid}")
                         except Exception as e:
-                            logger.error(f"Bulk source processing error for {sid}: {e}")
+                            logger.error(f"❌ Bulk source processing error for {sid}: {e}")
                 
                 background_tasks.add_task(process_task)
                 results.append({"id": source_id, "title": source_title, "status": "processing"})
@@ -337,6 +339,9 @@ async def add_source_to_notebook(
         # Process content in background (chunk and embed)
         async def process_content_in_background():
             """Process source content in background."""
+            logger.info(f"🚀 Background task started for source {source_id}")
+            logger.info(f"📂 Processing content: {len(content)} characters")
+            
             async with AsyncSessionFactory() as bg_db:
                 try:
                     bg_container = ServiceContainer(db=bg_db)
@@ -344,6 +349,7 @@ async def add_source_to_notebook(
                     source_repo = bg_container.get_source_repository()
                     
                     # Chunk and generate embeddings
+                    logger.info(f"🧠 Starting RAG ingestion for source {source_id}")
                     chunks = await rag_ingest_service.ingest_document(
                         source_id=source_id,
                         notebook_id=notebook_id,
@@ -356,17 +362,20 @@ async def add_source_to_notebook(
                     )
                     
                     # Update source status to completed
+                    logger.info(f"🏁 Updating source {source_id} status to completed")
                     await source_repo.update(source_id, status="completed")
                     await bg_db.commit()
-                    logger.info(f"Source {source_id} processing completed successfully")
+                    logger.info(f"🎉 Background processing completed successfully for source {source_id}")
+                    logger.info(f"📊 Final summary for {source_id}: {len(chunks)} chunks created")
                 except Exception as e:
                     await bg_db.rollback()
-                    logger.error(f"Background processing failed for source {source_id}: {e}", exc_info=True)
+                    logger.error(f"❌ Background processing failed for source {source_id}: {e}", exc_info=True)
                     try:
                         await source_repo.update(source_id, status="failed")
                         await bg_db.commit()
-                    except:
-                        pass
+                        logger.error(f"❌ Source {source_id} marked as failed")
+                    except Exception as update_error:
+                        logger.error(f"❌ Failed to update source {source_id} status to failed: {update_error}")
         
         background_tasks.add_task(process_content_in_background)
         

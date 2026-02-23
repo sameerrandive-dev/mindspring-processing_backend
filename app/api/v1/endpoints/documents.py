@@ -23,6 +23,10 @@ async def upload_document(
     db: AsyncSession = Depends(get_db_session)
 ):
     """Upload a document for processing."""
+    logger.info(f"📥 Document upload started for user {current_user.id}")
+    logger.info(f"📄 File name: {file.filename}")
+    logger.info(f"📁 Content type: {file.content_type}")
+    
     # Validate file type
     allowed_types = [
         "application/pdf", 
@@ -33,16 +37,20 @@ async def upload_document(
     ]
     
     if file.content_type not in allowed_types:
+        logger.error(f"❌ Invalid file type: {file.content_type}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"File type {file.content_type} not allowed. Allowed types: {allowed_types}"
         )
     
     # Calculate file hash
+    logger.info("🔍 Calculating file hash...")
     file_content = await file.read()
     file_hash = hashlib.sha256(file_content).hexdigest()
+    logger.info(f"✅ File hash calculated: {file_hash[:16]}...")
     
     # Check if file already exists
+    logger.info("🔍 Checking for existing document...")
     existing_doc_query = select(Document).where(
         Document.file_hash == file_hash,
         Document.user_id == current_user.id
@@ -51,6 +59,7 @@ async def upload_document(
     existing_doc = result.scalar_one_or_none()
     
     if existing_doc:
+        logger.info(f"✅ Document already exists: {existing_doc.id}")
         return {
             "message": "File already exists",
             "document_id": existing_doc.id,
@@ -58,6 +67,7 @@ async def upload_document(
         }
     
     # Create document record
+    logger.info("💾 Creating new document record...")
     document_id = str(uuid4())
     document = Document(
         id=document_id,
@@ -72,8 +82,10 @@ async def upload_document(
     db.add(document)
     await db.commit()
     await db.refresh(document)
+    logger.info(f"✅ Document record created: {document_id}")
     
     # Create a processing job
+    logger.info("🔧 Creating processing job...")
     job = Job(
         id=str(uuid4()),
         document_id=document.id,
@@ -84,6 +96,15 @@ async def upload_document(
     
     db.add(job)
     await db.commit()
+    logger.info(f"✅ Processing job created: {job.id}")
+    
+    logger.info(f"🎉 Document upload completed successfully!")
+    logger.info(f"📊 Summary:")
+    logger.info(f"   • Document ID: {document.id}")
+    logger.info(f"   • File name: {document.file_name}")
+    logger.info(f"   • File size: {document.file_size} bytes")
+    logger.info(f"   • Job ID: {job.id}")
+    logger.info(f"   • Status: {document.status}")
     
     return {
         "document_id": document.id,

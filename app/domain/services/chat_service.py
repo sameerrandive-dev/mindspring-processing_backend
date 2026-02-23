@@ -281,6 +281,11 @@ class ChatService:
         context_chunks = []
         chunk_ids = []
         
+        logger.info(
+            f"🔍 RAG Retrieval: Searching for chunks using embeddings saved during ingestion. "
+            f"Query: '{user_message[:100]}...'"
+        )
+        
         try:
             relevant_chunks = await chunk_repo.search_by_text(
                 query_text=user_message,
@@ -292,14 +297,34 @@ class ChatService:
             
             context_chunks = [chunk.plain_text for chunk in relevant_chunks]
             chunk_ids = [chunk.id for chunk in relevant_chunks]
+            
+            logger.info(
+                f"✅ RAG Retrieval Success: Found {len(relevant_chunks)} chunks from embeddings. "
+                f"Chunk IDs: {chunk_ids}. These chunks were saved with embeddings during document ingestion."
+            )
+            
+            # Log details about each chunk being used
+            for i, chunk in enumerate(relevant_chunks):
+                similarity = chunk.metadata_.get('similarity_score', 'N/A') if chunk.metadata_ else 'N/A'
+                logger.info(
+                    f"   📄 Using chunk {i+1}/{len(relevant_chunks)}: "
+                    f"id={chunk.id}, chunk_index={chunk.chunk_index}, "
+                    f"similarity={similarity}, text_length={len(chunk.plain_text)}"
+                )
         except Exception as e:
-            logger.warning(f"RAG search failed: {e}. Continuing without context.")
+            logger.warning(f"❌ RAG search failed: {e}. Continuing without context.")
         
         # 4. Build context string
         context = "\n\n".join([
             f"[Chunk {i+1}]: {text}" 
             for i, text in enumerate(context_chunks)
         ]) if context_chunks else ""
+        
+        if context:
+            logger.info(
+                f"📝 Built RAG context from {len(context_chunks)} chunks "
+                f"(saved with embeddings): total_context_length={len(context)} characters"
+            )
         
         # 5. Build conversation history for LLM
         messages_for_llm = []
@@ -320,13 +345,24 @@ Answer based on the provided context. If the answer is not in the context, say s
         messages_for_llm.append({"role": "user", "content": user_message})
         
         # 6. Generate AI response
+        logger.info(
+            f"🤖 Generating AI response using {len(context_chunks)} chunks "
+            f"retrieved from embeddings (saved during document ingestion)"
+        )
+        
         try:
             assistant_response = await llm_client.generate_chat_response(
                 messages=messages_for_llm,
                 temperature=0.7,
             )
+            
+            logger.info(
+                f"✅ AI response generated successfully using chunks from embeddings. "
+                f"Response length: {len(assistant_response)} characters. "
+                f"Chunks used: {chunk_ids}"
+            )
         except Exception as e:
-            logger.error(f"LLM generation failed: {e}")
+            logger.error(f"❌ LLM generation failed: {e}")
             assistant_response = "I apologize, but I'm having trouble generating a response right now."
         
         # 7. Store messages
@@ -419,4 +455,357 @@ Answer based on the provided context. If the answer is not in the context, say s
         )
 
         return assistant_msg
+    
+    # ========================================================================
+    # Chat-to-Learning Tools Generation
+    # ========================================================================
+    
+    async def generate_summary_from_conversation(
+        self,
+        conversation_id: str,
+        user_id: str,
+        llm_client: ILLMClient,
+        max_length: int = 500,
+        style: str = "concise",
+    ) -> str:
+        """
+        Generate a summary from the conversation messages.
+        
+        Args:
+            conversation_id: The conversation to summarize
+            user_id: User requesting the summary
+            llm_client: LLM client for generation
+            max_length: Maximum length of summary in characters
+            style: Summary style ('concise', 'detailed', 'bullet_points')
+            
+        Returns:
+            Generated summary text
+        """
+        # Get conversation and messages
+        conversation = await self.get_conversation(conversation_id, user_id)
+        messages = await self.get_conversation_messages(conversation_id, user_id)
+        
+        # Build content from messages
+        content_parts = []
+        for msg in messages:
+            content_parts.append(f"{msg.role.upper()}: {msg.content}")
+        
+        content = "\n\n".join(content_parts)
+        
+        if not content.strip():
+            raise ValueError("No content available to summarize from conversation")
+        
+        # Generate summary using LLM
+        summary = await llm_client.generate_summary(
+            content=content,
+            max_length=max_length,
+            style=style,
+        )
+        
+        # Record in history
+        await self.record_chat_generation(
+            user_id=user_id,
+            conversation_id=conversation_id,
+            notebook_id=conversation.notebook_id,
+            title=f"Summary: {conversation.title}",
+            content=summary,
+            metadata={
+                "type": "summary_from_conversation", 
+                "style": style, 
+                "max_length": max_length
+            },
+        )
+        
+        return summary
+    
+    async def generate_quiz_from_conversation(
+        self,
+        conversation_id: str,
+        user_id: str,
+        llm_client: ILLMClient,
+        topic: str,
+        num_questions: int = 5,
+        difficulty: str = "medium",
+    ) -> List[Dict[str, Any]]:
+        """
+        Generate a quiz from the conversation messages.
+        
+        Args:
+            conversation_id: The conversation to generate quiz from
+            user_id: User requesting the quiz
+            llm_client: LLM client for generation
+            topic: Topic for the quiz
+            num_questions: Number of questions to generate
+            difficulty: Difficulty level of questions
+            
+        Returns:
+            List of quiz questions
+        """
+        # Get conversation and messages
+        conversation = await self.get_conversation(conversation_id, user_id)
+        messages = await self.get_conversation_messages(conversation_id, user_id)
+        
+        # Build content from messages
+        content_parts = []
+        for msg in messages:
+            content_parts.append(f"{msg.role.upper()}: {msg.content}")
+        
+        content = "\n\n".join(content_parts)
+        
+        if not content.strip():
+            raise ValueError("No content available to generate quiz from conversation")
+        
+        # Generate quiz using LLM
+        quiz = await llm_client.generate_quiz(
+            content=content,
+            num_questions=num_questions,
+            difficulty=difficulty,
+        )
+        
+        # Record in history
+        await self.record_chat_generation(
+            user_id=user_id,
+            conversation_id=conversation_id,
+            notebook_id=conversation.notebook_id,
+            title=f"Quiz: {topic}",
+            content=str(quiz),
+            metadata={
+                "type": "quiz_from_conversation",
+                "topic": topic,
+                "num_questions": num_questions,
+                "difficulty": difficulty
+            },
+        )
+        
+        return quiz
+    
+    async def generate_study_guide_from_conversation(
+        self,
+        conversation_id: str,
+        user_id: str,
+        llm_client: ILLMClient,
+        topic: Optional[str] = None,
+        format: str = "structured",
+    ) -> str:
+        """
+        Generate a study guide from the conversation messages.
+        
+        Args:
+            conversation_id: The conversation to generate study guide from
+            user_id: User requesting the study guide
+            llm_client: LLM client for generation
+            topic: Optional topic for the study guide
+            format: Format of the study guide ('structured', 'outline', 'detailed')
+            
+        Returns:
+            Generated study guide text
+        """
+        # Get conversation and messages
+        conversation = await self.get_conversation(conversation_id, user_id)
+        messages = await self.get_conversation_messages(conversation_id, user_id)
+        
+        # Build content from messages
+        content_parts = []
+        for msg in messages:
+            content_parts.append(f"{msg.role.upper()}: {msg.content}")
+        
+        content = "\n\n".join(content_parts)
+        
+        if not content.strip():
+            raise ValueError("No content available to generate study guide from conversation")
+        
+        # Generate study guide using LLM
+        study_guide = await llm_client.generate_study_guide(
+            content=content,
+            topic=topic or conversation.title,
+            format=format,
+        )
+        
+        # Record in history
+        await self.record_chat_generation(
+            user_id=user_id,
+            conversation_id=conversation_id,
+            notebook_id=conversation.notebook_id,
+            title=f"Study Guide: {topic or conversation.title}",
+            content=study_guide,
+            metadata={
+                "type": "study_guide_from_conversation",
+                "format": format,
+                "topic": topic or conversation.title
+            },
+        )
+        
+        return study_guide
+    
+    async def generate_mindmap_from_conversation(
+        self,
+        conversation_id: str,
+        user_id: str,
+        llm_client: ILLMClient,
+        format: str = "json",
+    ) -> Dict[str, Any]:
+        """
+        Generate a mindmap from the conversation messages.
+        
+        Args:
+            conversation_id: The conversation to generate mindmap from
+            user_id: User requesting the mindmap
+            llm_client: LLM client for generation
+            format: Format of the mindmap ('json', 'markdown', 'mermaid')
+            
+        Returns:
+            Generated mindmap structure
+        """
+        # Get conversation and messages
+        conversation = await self.get_conversation(conversation_id, user_id)
+        messages = await self.get_conversation_messages(conversation_id, user_id)
+        
+        # Build content from messages
+        content_parts = []
+        for msg in messages:
+            content_parts.append(f"{msg.role.upper()}: {msg.content}")
+        
+        content = "\n\n".join(content_parts)
+        
+        if not content.strip():
+            raise ValueError("No content available to generate mindmap from conversation")
+        
+        # Generate mindmap using LLM
+        mindmap = await llm_client.generate_mindmap(
+            content=content,
+            format=format,
+        )
+        
+        # Record in history
+        await self.record_chat_generation(
+            user_id=user_id,
+            conversation_id=conversation_id,
+            notebook_id=conversation.notebook_id,
+            title=f"Mindmap: {conversation.title}",
+            content=str(mindmap),
+            metadata={
+                "type": "mindmap_from_conversation",
+                "format": format
+            },
+        )
+        
+        return mindmap
+
+    async def generate_flashcards_from_conversation(
+        self,
+        conversation_id: str,
+        user_id: str,
+        llm_client: ILLMClient,
+        topic: Optional[str] = None,
+    ) -> List[Dict[str, str]]:
+        """
+        Generate flashcards from the conversation messages.
+        
+        Args:
+            conversation_id: The conversation to generate flashcards from
+            user_id: User requesting the flashcards
+            llm_client: LLM client for generation
+            topic: Optional topic for the flashcards
+            
+        Returns:
+            List of flashcards with front/back pairs
+        """
+        # Get conversation and messages
+        conversation = await self.get_conversation(conversation_id, user_id)
+        messages = await self.get_conversation_messages(conversation_id, user_id)
+        
+        # Build content from messages
+        content_parts = []
+        for msg in messages:
+            content_parts.append(f"{msg.role.upper()}: {msg.content}")
+        
+        content = "\n\n".join(content_parts)
+        
+        if not content.strip():
+            raise ValueError("No content available to generate flashcards from conversation")
+        
+        # Create prompt for flashcard generation
+        prompt = f"""
+        Create flashcards from the following conversation content. 
+        Each flashcard should have a front (question or term) and back (answer or definition).
+        Make them educational and focused on key concepts discussed.
+        
+        Content:
+        {content}
+        
+        Topic: {topic or conversation.title}
+        
+        Return in the following format:
+        {{
+            "flashcards": [
+                {{"front": "question/term", "back": "answer/definition"}},
+                {{"front": "question/term", "back": "answer/definition"}}
+            ]
+        }}
+        """
+        
+        try:
+            # Generate flashcards using LLM chat response
+            response = await llm_client.generate_chat_response(
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.5,
+                max_tokens=2000,
+            )
+            
+            # Parse the response - try to extract JSON
+            import re
+            import json
+            
+            # Look for JSON in the response
+            json_match = re.search(r'\{.*\}', response, re.DOTALL)
+            if json_match:
+                json_str = json_match.group()
+                try:
+                    parsed = json.loads(json_str)
+                    flashcards = parsed.get("flashcards", [])
+                except json.JSONDecodeError:
+                    # If JSON parsing fails, create simple flashcards from content
+                    sentences = [s.strip() for s in content.split('.') if s.strip()]
+                    flashcards = []
+                    for i in range(0, min(len(sentences), 10), 2):
+                        if i + 1 < len(sentences):
+                            flashcards.append({
+                                "front": sentences[i][:100] + "..." if len(sentences[i]) > 100 else sentences[i],
+                                "back": sentences[i + 1][:150] + "..." if len(sentences[i + 1]) > 150 else sentences[i + 1]
+                            })
+            else:
+                # Fallback to simple extraction
+                sentences = [s.strip() for s in content.split('.') if s.strip()]
+                flashcards = []
+                for i in range(0, min(len(sentences), 10), 2):
+                    if i + 1 < len(sentences):
+                        flashcards.append({
+                            "front": sentences[i][:100] + "..." if len(sentences[i]) > 100 else sentences[i],
+                            "back": sentences[i + 1][:150] + "..." if len(sentences[i + 1]) > 150 else sentences[i + 1]
+                        })
+        except Exception as e:
+            logger.error(f"Error generating flashcards: {e}")
+            # Fallback response
+            sentences = [s.strip() for s in content.split('.') if s.strip()][:5]
+            flashcards = []
+            for i, sentence in enumerate(sentences):
+                flashcards.append({
+                    "front": f"What is concept {i+1}?",
+                    "back": sentence[:150] + "..." if len(sentence) > 150 else sentence
+                })
+        
+        # Record in history
+        await self.record_chat_generation(
+            user_id=user_id,
+            conversation_id=conversation_id,
+            notebook_id=conversation.notebook_id,
+            title=f"Flashcards: {topic or conversation.title}",
+            content=str(flashcards),
+            metadata={
+                "type": "flashcards_from_conversation",
+                "topic": topic or conversation.title
+            },
+        )
+        
+        return flashcards
 

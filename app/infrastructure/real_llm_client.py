@@ -24,7 +24,8 @@ class RealLLMClient(ILLMClient):
         self.embedding_model = settings.EMBEDDING_MODEL or "text-embedding-3-small"
         self.embedding_endpoint = settings.EMBEDDING_ENDPOINT or f"{self.base_url}/embeddings"
         self.chat_endpoint = settings.AI_API_ENDPOINT or f"{self.base_url}/chat/completions"
-        self.embedding_api_key = settings.EMBEDDING_MODEL_KEY or self.api_key
+        # Use EMBEDDING_MODEL_KEY for Nebius specifically, fallback to general API key
+        self.embedding_api_key = settings.EMBEDDING_MODEL_KEY or settings.NEEVCLOUD_API_KEY or self.api_key
         self.cache_provider = cache_provider
         
         # Create persistent HTTP client with connection pooling
@@ -260,37 +261,84 @@ class RealLLMClient(ILLMClient):
             for i in range(0, len(texts), batch_size)
         ]
         
+        logger.info(f"📦 Splitting {len(texts)} texts into {len(batches)} batches (batch size: {batch_size})")
+        
         async def process_batch(batch: List[str], batch_num: int) -> List[List[float]]:
             """Process a single batch."""
-            try:
-                response = await self._http_client.post(
-                    self.embedding_endpoint,
-                    headers={
-                        "Authorization": f"Bearer {self.embedding_api_key}",
-                        "Content-Type": "application/json",
-                    },
-                    json={
-                        "model": model,
-                        "input": batch,
-                    },
-                )
+            max_retries = 3
+            retry_delay = 1  # seconds
+            
+            for attempt in range(max_retries):
+                try:
+                    logger.info(f"🚀 Processing batch {batch_num + 1}/{len(batches)} ({len(batch)} texts), attempt {attempt + 1}")
+                    
+                    logger.info(f"📤 Sending embedding request to: {self.embedding_endpoint}")
+                    logger.info(f"📝 Batch size: {len(batch)}, Model: {model}")
+                    
+                    response = await self._http_client.post(
+                        self.embedding_endpoint,
+                        headers={
+                            "Authorization": f"Bearer {self.embedding_api_key}",
+                            "Content-Type": "application/json",
+                        },
+                        json={
+                            "model": model,
+                            "input": batch,
+                        },
+                    )
+                    
+                    logger.info(f"📥 Received response status: {response.status_code}")
+                    
+                    if response.status_code == 200:
+                        response.raise_for_status()
+                        data = response.json()
+                        
+                        # Handle both OpenAI format and other formats
+                        if "data" in data:
+                            embeddings = [item["embedding"] for item in data["data"]]
+                        elif isinstance(data, list):
+                            embeddings = [item["embedding"] for item in data]
+                        else:
+                            raise ValueError("Unexpected embedding response format")
+                        
+                        logger.info(f"✅ Batch {batch_num + 1} completed: Generated {len(embeddings)} embeddings")
+                        return embeddings
+                    else:
+                        logger.error(f"❌ Nebius API error {response.status_code} for {self.embedding_endpoint}: {response.text}")
+                        # More detailed error reporting for debugging
+                        if response.status_code == 401:
+                            logger.error("⚠️  Authorization error - check your API key is correct")
+                        elif response.status_code == 402:
+                            logger.error("⚠️  Payment required - check your Nebius account billing status")
+                        elif response.status_code == 403:
+                            logger.error("⚠️  Forbidden - check your API key permissions")
+                        elif response.status_code == 429:
+                            logger.error("⚠️  Rate limit exceeded - will retry after delay")
+                        else:
+                            logger.error(f"⚠️  Other error - check API endpoint and credentials")
+                        
+                        # Don't retry on certain error codes
+                        if response.status_code in [401, 403, 402]:  # Authentication/permission errors
+                            raise Exception(f"API authentication error: {response.status_code}")
+                        
+                        # Retry on rate limit or server errors
+                        if attempt < max_retries - 1 and response.status_code in [429, 500, 502, 503, 504]:
+                            logger.info(f"⏳ Waiting {retry_delay} seconds before retry...")
+                            await asyncio.sleep(retry_delay)
+                            retry_delay *= 2  # exponential backoff
+                        else:
+                            response.raise_for_status()  # Will raise the actual error if we're out of retries
                 
-                if response.status_code != 200:
-                    logger.error(f"Nebius API error {response.status_code} for {self.embedding_endpoint}: {response.text}")
-                
-                response.raise_for_status()
-                data = response.json()
-                
-                # Handle both OpenAI format and other formats
-                if "data" in data:
-                    return [item["embedding"] for item in data["data"]]
-                elif isinstance(data, list):
-                    return [item["embedding"] for item in data]
-                else:
-                    raise ValueError("Unexpected embedding response format")
-            except Exception as e:
-                logger.error(f"Error processing embedding batch {batch_num}: {e}")
-                raise
+                except Exception as e:
+                    if attempt == max_retries - 1:  # Last attempt
+                        logger.error(f"❌ Final error processing embedding batch {batch_num + 1} after {max_retries} attempts: {e}")
+                        raise
+                    else:
+                        logger.warning(f"⚠️  Attempt {attempt + 1} failed: {e}. Retrying in {retry_delay}s...")
+                        await asyncio.sleep(retry_delay)
+                        retry_delay *= 2  # exponential backoff
+            
+            raise Exception(f"Failed to process batch after {max_retries} attempts")
         
         # Process batches with concurrency limit
         semaphore = asyncio.Semaphore(self.max_concurrent_batches)
@@ -300,13 +348,16 @@ class RealLLMClient(ILLMClient):
                 return await process_batch(batch, batch_num)
         
         # Process all batches concurrently (with limit)
+        logger.info(f"⚡ Starting concurrent embedding generation for {len(batches)} batches")
         results = await asyncio.gather(*[
             process_with_semaphore(batch, i)
             for i, batch in enumerate(batches)
         ])
         
         # Flatten results
-        return [embedding for batch_result in results for embedding in batch_result]
+        final_embeddings = [embedding for batch_result in results for embedding in batch_result]
+        logger.info(f"🎯 Embedding generation completed: {len(final_embeddings)} total embeddings generated")
+        return final_embeddings
     
     async def generate_quiz(
         self,

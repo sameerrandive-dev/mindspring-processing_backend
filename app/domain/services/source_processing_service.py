@@ -54,26 +54,31 @@ class SourceProcessingService:
             source_id: Source ID to process
             storage_key: Storage key/URL of uploaded file
         """
+        logger.info(f"🚀 Starting background processing for source {source_id}")
+        logger.info(f"📂 Storage key: {storage_key}")
+        
         try:
             # Get source
+            logger.info(f"🔍 Retrieving source record for {source_id}")
             source = await self.source_repo.get_by_id(source_id)
             if not source:
-                logger.error(f"Source not found: {source_id}")
+                logger.error(f"❌ Source not found: {source_id}")
                 await self._mark_failed(source_id, "Source not found")
                 return
             
             # Update status to processing
+            logger.info(f"🔄 Updating source status to 'processing'")
             await self.source_repo.update(source_id, status="processing")
-            logger.info(f"Processing source {source_id} from storage key: {storage_key}")
+            logger.info(f"✅ Source {source_id} status updated to processing")
             
             # Validate storage_key
             if not storage_key:
+                logger.error(f"❌ Storage key is missing for source {source_id}")
                 await self._mark_failed(source_id, "Storage key is missing")
                 return
             
             # Extract the actual storage key if it's a full URL
-            # New format: bucket_name/user_id/notebook_id/source_id.ext
-            # If storage_key contains the public URL prefix, extract just the key part
+            logger.info(f"🔗 Processing storage key format")
             actual_key = storage_key
             if storage_key.startswith('http://') or storage_key.startswith('https://'):
                 # Full URL - extract the key part after the domain
@@ -83,36 +88,44 @@ class SourceProcessingService:
                 from urllib.parse import urlparse
                 parsed = urlparse(storage_key)
                 actual_key = parsed.path.lstrip('/')
+                logger.info(f"🌐 Extracted actual key from URL: {actual_key}")
             
             # Generate presigned URL (10 minutes expiration = 600 seconds)
+            logger.info(f"🔐 Generating presigned URL (10-minute expiration)")
             signed_url = await self.storage_provider.get_signed_url(actual_key, expires_in=600)
-            logger.info(f"Generated presigned URL for {actual_key} (expires in 10 minutes)")
+            logger.info(f"✅ Generated presigned URL for {actual_key}")
             
             # Determine file type and extract text
             file_extension = actual_key.split('.')[-1].lower() if '.' in actual_key else ''
+            logger.info(f"📄 File extension detected: {file_extension}")
             
             if file_extension == 'pdf':
+                logger.info(f"📄 Processing PDF file")
                 # Extract text from PDF using signed URL (no download needed)
                 text = await self._extract_pdf_from_url(signed_url)
             elif file_extension in ['txt', 'md']:
+                logger.info(f"📄 Processing text file ({file_extension})")
                 # Plain text files - fetch from signed URL
                 text = await self._fetch_text_from_url(signed_url)
             else:
                 # Try to fetch as text for other types
+                logger.info(f"📄 Processing file as text (extension: {file_extension})")
                 try:
                     text = await self._fetch_text_from_url(signed_url)
                 except Exception as e:
-                    logger.error(f"Unsupported file type: {file_extension}")
+                    logger.error(f"❌ Unsupported file type: {file_extension}")
                     await self._mark_failed(source_id, f"Unsupported file type: {file_extension}")
                     return
             
             if not text or len(text.strip()) == 0:
+                logger.error(f"❌ No text extracted from file for source {source_id}")
                 await self._mark_failed(source_id, "No text extracted from file")
                 return
             
-            logger.info(f"Extracted {len(text)} characters from source {source_id}")
+            logger.info(f"✅ Text extraction completed: {len(text)} characters extracted")
             
             # Chunk and generate embeddings
+            logger.info(f"🧠 Starting RAG ingestion process")
             chunks = await self.rag_ingest_service.ingest_document(
                 source_id=source_id,
                 notebook_id=source.notebook_id,
@@ -124,20 +137,27 @@ class SourceProcessingService:
                 },
             )
             
-            logger.info(f"Created {len(chunks)} chunks for source {source_id}")
+            logger.info(f"✅ RAG ingestion completed: Created {len(chunks)} chunks for source {source_id}")
             
             # Update source status to completed
+            logger.info(f"🏁 Updating source status to 'completed'")
             await self.source_repo.update(source_id, status="completed")
-            logger.info(f"Source {source_id} processing completed successfully")
+            logger.info(f"🎉 Source {source_id} processing completed successfully!")
+            logger.info(f"📊 Processing Summary:")
+            logger.info(f"   • Source ID: {source_id}")
+            logger.info(f"   • File type: {file_extension}")
+            logger.info(f"   • Text extracted: {len(text)} characters")
+            logger.info(f"   • Chunks created: {len(chunks)}")
+            logger.info(f"   • Status: COMPLETED")
             
         except ValidationError as e:
-            logger.error(f"Validation error processing source {source_id}: {e}")
+            logger.error(f"❌ Validation error processing source {source_id}: {e}")
             await self._mark_failed(source_id, f"Validation error: {str(e)}")
         except ExternalServiceError as e:
-            logger.error(f"External service error processing source {source_id}: {e}")
+            logger.error(f"❌ External service error processing source {source_id}: {e}")
             await self._mark_failed(source_id, f"Processing error: {str(e)}")
         except Exception as e:
-            logger.error(f"Unexpected error processing source {source_id}: {e}", exc_info=True)
+            logger.error(f"❌ Unexpected error processing source {source_id}: {e}", exc_info=True)
             # Ensure the source is marked as failed even for unexpected exceptions
             # to prevent it from being stuck in "processing" state
             await self._mark_failed(source_id, f"Unexpected system error: {str(e)}")
@@ -152,31 +172,44 @@ class SourceProcessingService:
         Returns:
             Extracted text
         """
+        logger.info("📄 Starting PDF text extraction...")
         try:
             import fitz  # PyMuPDF
             import httpx
             
             # Use httpx to fetch the PDF content first
             # This is more robust than fitz.open(url) which can fail on some systems/URLs
+            logger.info("📥 Fetching PDF content from URL...")
             async with httpx.AsyncClient(timeout=60.0) as client:
                 response = await client.get(signed_url)
                 response.raise_for_status()
                 pdf_bytes = response.content
+            logger.info(f"✅ PDF content fetched: {len(pdf_bytes)} bytes")
             
             # Open PDF from bytes
+            logger.info("🔍 Opening PDF and extracting text...")
             doc = fitz.open(stream=pdf_bytes, filetype="pdf")
             text = ""
-            for page in doc:
-                text += page.get_text()
+            page_count = doc.page_count
+            logger.info(f"📊 PDF has {page_count} pages")
+            
+            for page_num in range(page_count):
+                page = doc[page_num]
+                page_text = page.get_text()
+                text += page_text
+                logger.info(f"   • Page {page_num + 1}: {len(page_text)} characters extracted")
+            
             doc.close()
+            logger.info(f"✅ PDF text extraction completed: {len(text)} total characters")
             return text
         except ImportError:
+            logger.error("❌ PDF processing dependencies (PyMuPDF, httpx) not available")
             raise ExternalServiceError(
                 "PDF processing dependencies (PyMuPDF, httpx) not available.",
                 service_name="PDFProcessor",
             )
         except Exception as e:
-            logger.error(f"Failed to extract PDF from URL: {e}")
+            logger.error(f"❌ Failed to extract PDF from URL: {e}")
             raise ExternalServiceError(
                 f"Failed to extract text from PDF: {str(e)}",
                 service_name="PDFProcessor",

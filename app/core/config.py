@@ -109,6 +109,7 @@ class Settings(BaseSettings):
     
     # External services
     OPENAI_API_KEY: Optional[str] = None
+    NEEVCLOUD_API_KEY: Optional[str] = None
     ANTHROPIC_API_KEY: Optional[str] = None
     COHERE_API_KEY: Optional[str] = None
     

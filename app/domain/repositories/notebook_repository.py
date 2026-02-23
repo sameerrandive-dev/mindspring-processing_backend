@@ -348,6 +348,11 @@ class ChunkRepository:
         
         # Filter by similarity threshold and calculate actual scores
         filtered_chunks = []
+        logger.info(
+            f"🔍 Vector search: Found {len(chunks)} candidate chunks, "
+            f"filtering by similarity threshold {similarity_threshold}"
+        )
+        
         for chunk in chunks:
             if chunk.embedding_vector:
                 # Calculate cosine similarity
@@ -361,6 +366,12 @@ class ChunkRepository:
                         chunk.metadata_ = {}
                     chunk.metadata_['similarity_score'] = float(similarity)
                     filtered_chunks.append(chunk)
+                    logger.info(
+                        f"✅ Retrieved chunk from embeddings: "
+                        f"chunk_id={chunk.id}, chunk_index={chunk.chunk_index}, "
+                        f"source_id={chunk.source_id}, similarity_score={similarity:.4f}, "
+                        f"text_preview='{chunk.plain_text[:80]}...'"
+                    )
         
         # Log performance
         duration = time.time() - start_time
@@ -374,6 +385,11 @@ class ChunkRepository:
                 "results_found": len(filtered_chunks),
                 "candidates_checked": len(chunks)
             }
+        )
+        
+        logger.info(
+            f"📊 Vector search completed: Retrieved {len(filtered_chunks)} chunks "
+            f"from embeddings (saved during ingestion), returning top {top_k}"
         )
         
         # Return top_k after filtering
@@ -421,15 +437,32 @@ class ChunkRepository:
         if not llm_client:
             raise ValueError("LLM client required for text-based search")
         
+        logger.info(
+            f"🔎 Starting semantic search: query='{query_text[:100]}...', "
+            f"notebook_id={notebook_id}, source_id={source_id}, top_k={top_k}"
+        )
+        
         # Generate embedding for query text
+        logger.info(f"🧠 Generating embedding for query text to search saved chunk embeddings")
         embeddings = await llm_client.generate_embeddings([query_text])
         query_embedding = embeddings[0]
+        logger.info(
+            f"✅ Query embedding generated: dimension={len(query_embedding)}, "
+            f"now searching chunks saved with embeddings"
+        )
         
         # Use vector search
-        return await self.search_by_embedding(
+        results = await self.search_by_embedding(
             query_embedding=query_embedding,
             notebook_id=notebook_id,
             source_id=source_id,
             top_k=top_k,
             similarity_threshold=settings.VECTOR_SEARCH_THRESHOLD,
         )
+        
+        logger.info(
+            f"🎯 Semantic search completed: Found {len(results)} chunks "
+            f"using embeddings that were saved during document ingestion"
+        )
+        
+        return results

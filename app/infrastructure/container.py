@@ -151,9 +151,9 @@ class ServiceContainer:
         # Pass cache provider to LLM client for caching
         if llm_client:
             self.llm_client = llm_client
-        elif settings.OPENAI_API_KEY:
+        elif settings.OPENAI_API_KEY or settings.NEEVCLOUD_API_KEY:
             self.llm_client = RealLLMClient(cache_provider=self.cache_provider)
-            logger.info("OPENAI_API_KEY detected - using RealLLMClient")
+            logger.info("API key detected (OPENAI_API_KEY or NEEVCLOUD_API_KEY) - using RealLLMClient")
         else:
             self.llm_client = MockLLMClient()
             logger.warning("OPENAI_API_KEY not configured - using MockLLMClient. LLM features will use mock responses.")
