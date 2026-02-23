@@ -17,8 +17,11 @@ RUN apt-get update && apt-get install -y \
 COPY requirements.txt .
 
 # Install Python dependencies
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+# Upgrade pip and build tools first
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel
+
+# Install packages - this will fail if there are unresolvable conflicts
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY . .

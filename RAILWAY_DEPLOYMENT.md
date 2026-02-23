@@ -360,21 +360,28 @@ This error occurs when Railway can't automatically detect your build configurati
    - Railway will automatically detect and use it
    - This is often more reliable than auto-detection
 
-### Issue 2: Build Fails - "Could not find a version that satisfies the requirement"
+### Issue 2: Build Fails - "ResolutionImpossible" or "Could not find a version that satisfies the requirement"
 
 **Solution:**
-This error means a package in `requirements.txt` doesn't exist on PyPI or the version is incorrect.
+This error means pip can't resolve dependencies due to version conflicts or unavailable packages.
 
 1. **Check the package name and version:**
    - Verify the package exists on [PyPI](https://pypi.org)
    - Check if the version number is correct
-   - Try removing the version pin to get the latest: `package-name` instead of `package-name==1.2.3`
+   - Try using flexible version constraints: `package-name>=1.2.0,<2.0.0` instead of `package-name==1.2.3`
 
-2. **Remove unused packages:**
-   - If a package isn't actually imported in your code, remove it from `requirements.txt`
-   - Example: `docling-sdk` was removed because it's not available on PyPI and not used
+2. **Fix dependency conflicts:**
+   - Beta versions (like `0.50b0`) can cause conflicts - use stable versions or flexible ranges
+   - Example: Changed `opentelemetry-instrumentation-fastapi==0.50b0` to `opentelemetry-instrumentation-fastapi>=0.45.0,<1.0.0`
+   - Remove unused packages that aren't actually imported in your code
 
-3. **Test locally first:**
+3. **Update build tools in Dockerfile:**
+   ```dockerfile
+   RUN pip install --no-cache-dir --upgrade pip setuptools wheel
+   ```
+   This ensures you have the latest dependency resolver.
+
+4. **Test locally first:**
    ```bash
    pip install -r requirements.txt
    ```
