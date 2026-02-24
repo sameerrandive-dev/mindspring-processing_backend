@@ -193,7 +193,7 @@ class SourceGenerationService:
             user_id=user_id,
             topic=topic,
             questions_json=questions,
-            model="gpt-4",  # TODO: Get from config
+            model=getattr(self.llm_client, 'model', 'gpt-oss-120b'),
             metadata={"source_id": source_id, "difficulty": difficulty},
         )
         
@@ -224,7 +224,7 @@ class SourceGenerationService:
             user_id=user_id,
             topic=topic,
             questions_json=questions,
-            model="gpt-4",  # TODO: Get from config
+            model=getattr(self.llm_client, 'model', 'gpt-oss-120b'),
             metadata={"scope": "notebook", "difficulty": difficulty},
         )
         
@@ -271,7 +271,7 @@ class SourceGenerationService:
             user_id=user_id,
             topic=topic or source.title,
             content=guide_content,
-            model="gpt-4",  # TODO: Get from config
+            model=getattr(self.llm_client, 'model', 'gpt-oss-120b'),
             metadata={"source_id": source_id, "format": format},
         )
         
@@ -299,7 +299,7 @@ class SourceGenerationService:
             user_id=user_id,
             topic=topic,
             content=guide_content,
-            model="gpt-4",  # TODO: Get from config
+            model=getattr(self.llm_client, 'model', 'gpt-oss-120b'),
             metadata={"scope": "notebook", "format": format},
         )
         

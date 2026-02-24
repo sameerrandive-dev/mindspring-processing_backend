@@ -49,6 +49,7 @@ async def create_conversation(
         "notebook_id": conversation.notebook_id,
         "title": conversation.title,
         "mode": conversation.mode,
+        "source_id": conversation.source_id,
         "created_at": conversation.created_at.isoformat()
     }
 
@@ -76,6 +77,7 @@ async def list_conversations(
                 "id": conv.id,
                 "title": conv.title,
                 "mode": conv.mode,
+                "source_id": conv.source_id,
                 "created_at": conv.created_at.isoformat(),
                 "updated_at": conv.updated_at.isoformat()
             }

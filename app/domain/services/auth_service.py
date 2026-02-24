@@ -52,6 +52,7 @@ class AuthService:
         self,
         email: str,
         password: str,
+        full_name: Optional[str] = None,
     ) -> Tuple[User, str]:
         """
         Register a new user with email and password.
@@ -84,6 +85,7 @@ class AuthService:
         user = await self.user_repo.create(
             email=email,
             hashed_password=hashed_password,
+            full_name=full_name,
             is_verified=False,
         )
         

@@ -16,6 +16,7 @@ from app.api.exception_handlers import (
 )
 from app.api.middleware.timeout import TimeoutMiddleware
 from app.api.middleware.rate_limit import RateLimitMiddleware
+from app.infrastructure.monitoring.logging_setup import LoggingMiddleware
 from app.domain.errors.exceptions import DomainError
 
 
@@ -50,6 +51,7 @@ def create_app() -> FastAPI:
     app.add_exception_handler(Exception, generic_error_handler)
 
     # Middleware
+    app.add_middleware(LoggingMiddleware)
     app.add_middleware(RateLimitMiddleware)
     app.add_middleware(TimeoutMiddleware)
     

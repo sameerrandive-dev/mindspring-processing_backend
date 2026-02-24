@@ -20,6 +20,7 @@ class UserRepository:
         self,
         email: str,
         hashed_password: str,
+        full_name: Optional[str] = None,
         google_id: Optional[str] = None,
         is_verified: bool = False,
     ) -> User:
@@ -27,6 +28,7 @@ class UserRepository:
         user = User(
             email=email,
             hashed_password=hashed_password,
+            full_name=full_name,
             google_id=google_id,
             is_verified=is_verified,
         )

@@ -52,6 +52,7 @@ async def signup(
     user, otp_code = await service.register_user(
         email=user_in.email,
         password=user_in.password,
+        full_name=user_in.full_name,
     )
     logger.info(f"Signup successful for: {user_in.email}")
     return UserResponse.model_validate(user)

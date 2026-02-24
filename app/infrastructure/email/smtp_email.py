@@ -1,6 +1,6 @@
 """SMTP email provider implementation."""
 
-from typing import Optional
+import asyncio
 import logging
 import smtplib
 from email.mime.text import MIMEText
@@ -28,35 +28,45 @@ class SMTPEmailProvider(IEmailProvider):
             logger.error("SMTP configuration is incomplete. Cannot send email.")
             return False
         
+        # Use a function for the blocking SMTP logic
+        def _send_sync():
+            try:
+                # Create message
+                message = MIMEMultipart("alternative")
+                message["Subject"] = subject
+                message["From"] = settings.EMAIL_FROM or settings.SMTP_USERNAME
+                message["To"] = to
+                
+                # Attach text content if provided
+                if text_content:
+                    part1 = MIMEText(text_content, "plain")
+                    message.attach(part1)
+                
+                # Attach HTML content
+                part2 = MIMEText(html_content, "html")
+                message.attach(part2)
+                
+                # Send email with 10s timeout
+                with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=10) as server:
+                    # Check if we should use STARTTLS (usually for port 587)
+                    if settings.SMTP_PORT == 587:
+                        server.starttls()
+                    
+                    server.login(settings.SMTP_USERNAME, settings.SMTP_PASSWORD)
+                    server.send_message(message)
+                return True
+            except Exception as e:
+                logger.error(f"Sync SMTP send failed: {e}")
+                raise e
+
         try:
-            # Create message
-            message = MIMEMultipart("alternative")
-            message["Subject"] = subject
-            message["From"] = settings.EMAIL_FROM or settings.SMTP_USERNAME
-            message["To"] = to
-            
-            # Attach text content if provided
-            if text_content:
-                part1 = MIMEText(text_content, "plain")
-                message.attach(part1)
-            
-            # Attach HTML content
-            part2 = MIMEText(html_content, "html")
-            message.attach(part2)
-            
-            # Send email
-            with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT) as server:
-                server.starttls()
-                server.login(settings.SMTP_USERNAME, settings.SMTP_PASSWORD)
-                server.send_message(message)
-            
-            logger.info(f"Email sent successfully to {to}: {subject}")
-            return True
+            # Run blocking SMTP in a separate thread to avoid blocking event loop
+            return await asyncio.to_thread(_send_sync)
             
         except smtplib.SMTPAuthenticationError as e:
             logger.error(f"SMTP authentication failed: {str(e)}")
             return False
-        except smtplib.SMTPException as e:
+        except (smtplib.SMTPException, ConnectionError, TimeoutError) as e:
             logger.error(f"SMTP error occurred while sending email to {to}: {str(e)}")
             return False
         except Exception as e:
@@ -85,4 +95,11 @@ If you didn't request this code, please ignore this email.
 Best regards,
 The MindSpring Team
 """
-        return await self.send(to, subject, html_content, text_content)
+        result = await self.send(to, subject, html_content, text_content)
+        if not result:
+            logger.warning(f"--- FAILED TO SEND EMAIL ---")
+            logger.warning(f"TO: {to}")
+            logger.warning(f"ACTION: {action}")
+            logger.warning(f"CODE: {code}")
+            logger.warning(f"---------------------------")
+        return result

@@ -19,13 +19,13 @@ class RealLLMClient(ILLMClient):
     
     def __init__(self, cache_provider: Optional[ICacheProvider] = None):
         self.base_url = settings.LLM_BASE_URL or "https://api.openai.com/v1"
-        self.api_key = settings.OPENAI_API_KEY
+        self.api_key = settings.OPENAI_API_KEY or settings.NEEVCLOUD_API_KEY
         self.model = settings.LLM_MODEL or "gpt-4"
         self.embedding_model = settings.EMBEDDING_MODEL or "text-embedding-3-small"
         self.embedding_endpoint = settings.EMBEDDING_ENDPOINT or f"{self.base_url}/embeddings"
         self.chat_endpoint = settings.AI_API_ENDPOINT or f"{self.base_url}/chat/completions"
         # Use EMBEDDING_MODEL_KEY for Nebius specifically, fallback to general API key
-        self.embedding_api_key = settings.EMBEDDING_MODEL_KEY or settings.NEEVCLOUD_API_KEY or self.api_key
+        self.embedding_api_key = settings.EMBEDDING_MODEL_KEY or settings.NEEVCLOUD_API_KEY or settings.OPENAI_API_KEY or self.api_key
         self.cache_provider = cache_provider
         
         # Create persistent HTTP client with connection pooling
@@ -131,25 +131,75 @@ class RealLLMClient(ILLMClient):
             )
             response.raise_for_status()
             data = response.json()
+            
+            # Log the full response for debugging
+            logger.info(f"LLM Raw Response: {json.dumps(data)}")
+            
+            if not data.get("choices"):
+                logger.error(f"LLM returned no choices: {data}")
+                return ""
+                
             result = data["choices"][0]["message"]["content"]
+            
+            if not result:
+                logger.warning(f"LLM returned empty content for model {self.model}")
             
             # Log performance
             duration = time.time() - start_time
             log_performance(logger, "llm_chat_api_call", duration, resource="llm_api")
             
             # Cache the response
-            if self.cache_provider and cache_key and temperature <= 0.7:
+            if self.cache_provider and cache_key and temperature <= 0.7 and result:
                 await self.cache_provider.set(cache_key, result, ttl_seconds=self.cache_ttl_chat)
             
-            return result
+            return result or ""
         except httpx.HTTPError as e:
             duration = time.time() - start_time
             log_performance(logger, "llm_chat_api_error", duration, resource="llm_api")
             logger.error(f"HTTP error in generate_chat_response: {e}")
             raise
-        except KeyError as e:
+        except (KeyError, IndexError) as e:
             logger.error(f"Unexpected response format: {e}")
             raise ValueError(f"Invalid response from LLM API: {e}")
+
+    def _repair_json(self, json_str: str) -> str:
+        """Attempt to repair truncated JSON by closing open brackets/braces."""
+        json_str = json_str.strip()
+        stack = []
+        is_in_string = False
+        escape = False
+        
+        for i, char in enumerate(json_str):
+            if escape:
+                escape = False
+                continue
+            if char == '\\':
+                escape = True
+                continue
+            if char == '"':
+                is_in_string = not is_in_string
+                continue
+            
+            if not is_in_string:
+                if char == '{' or char == '[':
+                    stack.append(char)
+                elif char == '}' or char == ']':
+                    if stack:
+                        stack.pop()
+        
+        # If we are inside a string, close it first
+        if is_in_string:
+            json_str += '"'
+            
+        # Close remaining brackets in reverse order
+        while stack:
+            opener = stack.pop()
+            if opener == '{':
+                json_str += '}'
+            elif opener == '[':
+                json_str += ']'
+                
+        return json_str
     
     async def generate_embeddings(
         self,
@@ -433,8 +483,8 @@ Return only a JSON array of questions, no other text. Example format:
             "bullet_points": "Provide a summary in bullet point format with key points"
         }
         
-        # Limit content length to avoid token limits (roughly 1500 tokens)
-        content_preview = content[:6000] if len(content) > 6000 else content
+        # Limit content length to avoid token limits (roughly 3000 tokens)
+        content_preview = content[:12000] if len(content) > 12000 else content
         
         prompt = f"""{style_instructions.get(style, 'Summarize')} the following content in approximately {max_length} characters.
 
@@ -446,8 +496,8 @@ Summary:"""
         try:
             summary = await self.generate_chat_response(
                 messages=[{"role": "user", "content": prompt}],
-                temperature=0.3,  # Lower temperature for more consistent summaries
-                max_tokens=min(max_length // 2, 1000),  # Approximate token count
+                temperature=0.3,
+                max_tokens=2048,  # Increased to allow full processing
             )
             
             return summary.strip()
@@ -536,7 +586,7 @@ Return only the {format} output, no additional explanation."""
             response = await self.generate_chat_response(
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.6,
-                max_tokens=2000,
+                max_tokens=4000, # Increased from 2000 to prevent 'finish_reason: length'
             )
             
             if format == "json":
@@ -549,16 +599,21 @@ Return only the {format} output, no additional explanation."""
                 
                 try:
                     return json.loads(json_str)
-                except json.JSONDecodeError as e:
-                    logger.error(f"Failed to parse mindmap JSON: {response[:200]}")
-                    # Return a fallback structure
-                    return {
-                        "root": {
-                            "id": "root",
-                            "label": "Content Analysis",
-                            "children": []
+                except json.JSONDecodeError:
+                    logger.warning("Detected malformed JSON in mindmap, attempting repair...")
+                    try:
+                        repaired_json = self._repair_json(json_str)
+                        return json.loads(repaired_json)
+                    except Exception as e:
+                        logger.error(f"Failed to parse or repair mindmap JSON: {json_str[:200]}... Error: {e}")
+                        # Return a fallback structure
+                        return {
+                            "root": {
+                                "id": "root",
+                                "label": "Content Analysis (Parsing Failed - Output Truncated)",
+                                "children": []
+                            }
                         }
-                    }
             else:
                 # For markdown/mermaid, return as string in dict
                 return {"content": response.strip()}
