@@ -1,6 +1,7 @@
 """SMTP email provider implementation."""
 
 import asyncio
+from typing import Optional
 import logging
 import smtplib
 from email.mime.text import MIMEText
