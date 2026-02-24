@@ -21,13 +21,50 @@ Before you begin, make sure you have:
 - Debug issues more easily with full error messages
 - Ensure everything works before deploying
 
+### Quick Build Test (Like `npm run build`)
+
+We've created build scripts you can run before pushing to Railway:
+
+**Option 1: Using Make (Recommended - Works on all platforms)**
+```bash
+# Build and test
+make build
+
+# Or just test
+make test
+```
+
+**Option 2: Using Shell Script (Linux/Mac/Git Bash)**
+```bash
+chmod +x build.sh
+./build.sh
+```
+
+**Option 3: Using PowerShell (Windows)**
+```powershell
+.\build.ps1
+```
+
+**Option 4: Direct Docker Command**
+```bash
+docker build -t mindspring-fastapi:test .
+```
+
+All these commands do the same thing - they build your Docker image locally so you can catch errors before pushing to Railway!
+
 ### Step 1: Build the Docker Image Locally
 
 ```bash
 # Navigate to your project directory
 cd path/to/mindspring-fastapi
 
-# Build the Docker image
+# Build the Docker image (choose one method above)
+make build
+# OR
+./build.sh
+# OR
+.\build.ps1
+# OR
 docker build -t mindspring-fastapi:test .
 ```
 

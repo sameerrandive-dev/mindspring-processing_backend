@@ -1,0 +1,47 @@
+version: '3.8'
+
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://user:password@postgres:5432/mindspring
+      - REDIS_URL=redis://redis:6379
+      - SECRET_KEY=test-secret-key-change-in-production
+      - PORT=8000
+      - DEBUG=True
+      # Add other required environment variables as needed
+      # - OPENAI_API_KEY=your-key
+      # - NEEVCLOUD_API_KEY=your-key
+    depends_on:
+      - postgres
+      - redis
+    volumes:
+      # Mount your code for development (optional)
+      - .:/app
+
+  postgres:
+    image: postgres:15
+    environment:
+      - POSTGRES_DB=mindspring
+      - POSTGRES_USER=user
+      - POSTGRES_PASSWORD=password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    # Enable pgvector extension
+    command: postgres -c shared_preload_libraries=vector
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+
+volumes:
+  postgres_data:
+  redis_data:

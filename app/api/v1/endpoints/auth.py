@@ -48,20 +48,13 @@ async def signup(
     service=Depends(get_auth_service),
 ):
     """Create new user and send OTP."""
-    try:
-        logger.info(f"Signup request for email: {user_in.email}")
-        user, otp_code = await service.register_user(
-            email=user_in.email,
-            password=user_in.password,
-        )
-        logger.info(f"Signup successful for: {user_in.email}")
-        return UserResponse.model_validate(user)
-    except DomainError as e:
-        e.log(logger)
-        raise HTTPException(status_code=e.http_status_code, detail=e.message)
-    except Exception as e:
-        logger.error(f"Unexpected error in signup: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Internal server error")
+    logger.info(f"Signup request for email: {user_in.email}")
+    user, otp_code = await service.register_user(
+        email=user_in.email,
+        password=user_in.password,
+    )
+    logger.info(f"Signup successful for: {user_in.email}")
+    return UserResponse.model_validate(user)
 
 
 @router.post("/verify-otp", response_model=Msg)
@@ -70,15 +63,8 @@ async def verify_otp(
     service=Depends(get_auth_service),
 ):
     """Verify OTP and activate account."""
-    try:
-        await service.verify_email(email=data.email, otp_code=data.code)
-        return {"message": "Email verified successfully"}
-    except DomainError as e:
-        e.log(logger)
-        raise HTTPException(status_code=e.http_status_code, detail=e.message)
-    except Exception as e:
-        logger.error(f"Unexpected error in verify_otp: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Internal server error")
+    await service.verify_email(email=data.email, otp_code=data.code)
+    return {"message": "Email verified successfully"}
 
 
 @router.post("/login", response_model=Token)
@@ -88,28 +74,24 @@ async def login(
     service=Depends(get_auth_service),
 ):
     """Login and set refresh token in HTTP-only cookie."""
-    try:
-        access_token, refresh_token, user = await service.login(
-            email=user_in.email,
-            password=user_in.password,
-        )
-        response.set_cookie(
-            key="refresh_token",
-            value=refresh_token,
-            httponly=True,
-            max_age=7 * 24 * 60 * 60,
-            samesite="lax",
-            secure=True,
-        )
-        logger.info(f"Login successful: {user_in.email}")
-        return {
-            "access_token": access_token,
-            "token_type": "bearer",
-            "expires_in": 30 * 60,
-        }
-    except DomainError as e:
-        e.log(logger)
-        raise HTTPException(status_code=e.http_status_code, detail=e.message)
+    access_token, refresh_token, user = await service.login(
+        email=user_in.email,
+        password=user_in.password,
+    )
+    response.set_cookie(
+        key="refresh_token",
+        value=refresh_token,
+        httponly=True,
+        max_age=7 * 24 * 60 * 60,
+        samesite="lax",
+        secure=True,
+    )
+    logger.info(f"Login successful: {user_in.email}")
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "expires_in": 30 * 60,
+    }
 
 
 @router.post("/refresh", response_model=Token)
@@ -119,32 +101,25 @@ async def refresh_token_endpoint(
     service=Depends(get_auth_service),
 ):
     """Refresh access token using refresh token from cookie."""
-    try:
-        refresh_token = request.cookies.get("refresh_token")
-        if not refresh_token:
-            raise AuthError("Refresh token not provided")
-        
-        new_access_token, new_refresh_token = await service.refresh_tokens(refresh_token)
-        response.set_cookie(
-            key="refresh_token",
-            value=new_refresh_token,
-            httponly=True,
-            max_age=7 * 24 * 60 * 60,
-            samesite="lax",
-            secure=True,
-        )
-        logger.info("Token refresh successful")
-        return {
-            "access_token": new_access_token,
-            "token_type": "bearer",
-            "expires_in": 30 * 60,
-        }
-    except DomainError as e:
-        e.log(logger)
-        raise HTTPException(status_code=e.http_status_code, detail=e.message)
-    except Exception as e:
-        logger.error(f"Unexpected error in refresh_token: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Internal server error")
+    refresh_token = request.cookies.get("refresh_token")
+    if not refresh_token:
+        raise AuthError("Refresh token not provided")
+    
+    new_access_token, new_refresh_token = await service.refresh_tokens(refresh_token)
+    response.set_cookie(
+        key="refresh_token",
+        value=new_refresh_token,
+        httponly=True,
+        max_age=7 * 24 * 60 * 60,
+        samesite="lax",
+        secure=True,
+    )
+    logger.info("Token refresh successful")
+    return {
+        "access_token": new_access_token,
+        "token_type": "bearer",
+        "expires_in": 30 * 60,
+    }
 
 
 @router.post("/logout", response_model=Msg)
@@ -155,18 +130,11 @@ async def logout(
     service=Depends(get_auth_service),
 ):
     """Logout by revoking refresh token."""
-    try:
-        refresh_token = request.cookies.get("refresh_token")
-        await service.logout(user_id=current_user.id, refresh_token=refresh_token)
-        response.delete_cookie("refresh_token")
-        logger.info(f"Logout successful: {current_user.id}")
-        return {"message": "Logged out successfully"}
-    except DomainError as e:
-        e.log(logger)
-        raise HTTPException(status_code=e.http_status_code, detail=e.message)
-    except Exception as e:
-        logger.error(f"Unexpected error in logout: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Internal server error")
+    refresh_token = request.cookies.get("refresh_token")
+    await service.logout(user_id=current_user.id, refresh_token=refresh_token)
+    response.delete_cookie("refresh_token")
+    logger.info(f"Logout successful: {current_user.id}")
+    return {"message": "Logged out successfully"}
 
 
 @router.post("/resend-otp", response_model=Msg)
@@ -175,15 +143,8 @@ async def resend_otp(
     service=Depends(get_auth_service),
 ):
     """Resend OTP to user email."""
-    try:
-        await service.resend_otp(email=data.email)
-        return {"message": "OTP resent successfully"}
-    except DomainError as e:
-        e.log(logger)
-        raise HTTPException(status_code=e.http_status_code, detail=e.message)
-    except Exception as e:
-        logger.error(f"Unexpected error in resend_otp: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Internal server error")
+    await service.resend_otp(email=data.email)
+    return {"message": "OTP resent successfully"}
 
 
 @router.post("/forgot-password", response_model=Msg)
@@ -192,16 +153,9 @@ async def forgot_password(
     service=Depends(get_auth_service),
 ):
     """Request password reset by sending OTP to email."""
-    try:
-        await service.request_password_reset(email=data.email)
-        # Always return success message for security (don't reveal if email exists)
-        return {"message": "If the email exists, a password reset code has been sent"}
-    except DomainError as e:
-        e.log(logger)
-        raise HTTPException(status_code=e.http_status_code, detail=e.message)
-    except Exception as e:
-        logger.error(f"Unexpected error in forgot_password: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Internal server error")
+    await service.request_password_reset(email=data.email)
+    # Always return success message for security (don't reveal if email exists)
+    return {"message": "If the email exists, a password reset code has been sent"}
 
 
 @router.post("/reset-password", response_model=Msg)
@@ -210,19 +164,12 @@ async def reset_password(
     service=Depends(get_auth_service),
 ):
     """Reset password using OTP verification."""
-    try:
-        await service.reset_password(
-            email=data.email,
-            otp_code=data.code,
-            new_password=data.new_password,
-        )
-        return {"message": "Password reset successfully"}
-    except DomainError as e:
-        e.log(logger)
-        raise HTTPException(status_code=e.http_status_code, detail=e.message)
-    except Exception as e:
-        logger.error(f"Unexpected error in reset_password: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Internal server error")
+    await service.reset_password(
+        email=data.email,
+        otp_code=data.code,
+        new_password=data.new_password,
+    )
+    return {"message": "Password reset successfully"}
 
 
 @router.get("/google/login")
@@ -254,66 +201,57 @@ async def google_callback(
     service=Depends(get_auth_service),
 ):
     """Handle Google OAuth callback."""
-    try:
-        from app.core.oauth import google_oauth
-        
-        if not settings.GOOGLE_CLIENT_ID or not settings.GOOGLE_CLIENT_SECRET:
-            raise HTTPException(
-                status_code=503,
-                detail="Google OAuth is not configured"
-            )
-        
-        # Exchange code for tokens
-        tokens = await google_oauth.get_tokens(code)
-        access_token_google = tokens["access_token"]
-        
-        # Get user info from Google
-        user_info = await google_oauth.get_user_info(access_token_google)
-        email = user_info.get("email")
-        google_id = user_info.get("sub")
-        name = user_info.get("name")
-        
-        if not email or not google_id:
-            raise HTTPException(
-                status_code=400,
-                detail="Failed to retrieve user information from Google"
-            )
-        
-        # Login or register user via Google
-        access_token, refresh_token, user = await service.google_login(
-            google_id=google_id,
-            email=email,
-            name=name,
+    from app.core.oauth import google_oauth
+    
+    if not settings.GOOGLE_CLIENT_ID or not settings.GOOGLE_CLIENT_SECRET:
+        raise HTTPException(
+            status_code=503,
+            detail="Google OAuth is not configured"
         )
-        
-        # Set refresh token in HTTP-only cookie
-        response.set_cookie(
-            key="refresh_token",
-            value=refresh_token,
-            httponly=True,
-            max_age=7 * 24 * 60 * 60,
-            samesite="lax",
-            secure=True,
+    
+    # Exchange code for tokens
+    tokens = await google_oauth.get_tokens(code)
+    access_token_google = tokens["access_token"]
+    
+    # Get user info from Google
+    user_info = await google_oauth.get_user_info(access_token_google)
+    email = user_info.get("email")
+    google_id = user_info.get("sub")
+    name = user_info.get("name")
+    
+    if not email or not google_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Failed to retrieve user information from Google"
         )
-        
-        logger.info(f"Google OAuth successful: {email}")
-        
-        # Return JSON response with token (for API clients)
-        # In production, you might want to redirect to a frontend URL instead
-        return {
-            "access_token": access_token,
-            "token_type": "bearer",
-            "expires_in": 30 * 60,
-            "user": UserResponse.model_validate(user).model_dump(),
-        }
-    except HTTPException:
-        raise
-    except DomainError as e:
-        e.log(logger)
-        raise HTTPException(status_code=e.http_status_code, detail=e.message)
-    except Exception as e:
-        logger.error(f"Unexpected error in google_callback: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Google authentication failed")
+    
+    # Login or register user via Google
+    access_token, refresh_token, user = await service.google_login(
+        google_id=google_id,
+        email=email,
+        name=name,
+    )
+    
+    # Set refresh token in HTTP-only cookie
+    response.set_cookie(
+        key="refresh_token",
+        value=refresh_token,
+        httponly=True,
+        max_age=7 * 24 * 60 * 60,
+        samesite="lax",
+        secure=True,
+    )
+    
+    logger.info(f"Google OAuth successful: {email}")
+    
+    # Return JSON response with token (for API clients)
+    # In production, you might want to redirect to a frontend URL instead
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "expires_in": 30 * 60,
+        "user": UserResponse.model_validate(user).model_dump(),
+    }
 
 
 @router.get("/me", response_model=UserResponse)

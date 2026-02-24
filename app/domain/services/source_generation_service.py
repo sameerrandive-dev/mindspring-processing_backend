@@ -48,6 +48,14 @@ class SourceGenerationService:
         if not chunks:
             raise ValidationError("Source has no content. Please ensure the source has been processed and chunked.")
         return "\n\n".join([chunk.plain_text for chunk in chunks])
+
+    async def _get_notebook_content(self, notebook_id: str) -> str:
+        """Helper: Get all chunk text from all sources in a notebook."""
+        chunks = await self.chunk_repo.list_by_notebook(notebook_id)
+        if not chunks:
+            summary = "Notebook has no sources or sources have no content. Please upload and process sources first."
+            raise ValidationError(summary)
+        return "\n\n".join([chunk.plain_text for chunk in chunks])
     
     # ========================================================================
     # Summary Generation
@@ -104,6 +112,42 @@ class SourceGenerationService:
             "history_id": history.id,
             "style": style,
         }
+
+    async def generate_notebook_summary(
+        self,
+        notebook_id: str,
+        user_id: str,
+        max_length: int = 1000,
+        style: str = "detailed",
+    ) -> Dict[str, Any]:
+        """Generate summary from all sources in a notebook."""
+        content = await self._get_notebook_content(notebook_id)
+        
+        summary = await self.llm_client.generate_summary(
+            content=content,
+            max_length=max_length,
+            style=style,
+        )
+        
+        # Store in generation_history
+        history = await self.history_repo.create(
+            user_id=user_id,
+            history_type="summary",
+            title=f"Notebook Summary: {notebook_id}",
+            content=summary,
+            content_preview=summary[:200] if summary else "",
+            resource_id=notebook_id,
+            notebook_id=notebook_id,
+            metadata={"style": style, "max_length": max_length, "scope": "notebook"},
+        )
+        
+        logger.info(f"Summary generated for notebook {notebook_id} by user {user_id}")
+        return {
+            "summary": summary,
+            "notebook_id": notebook_id,
+            "history_id": history.id,
+            "style": style,
+        }
     
     # ========================================================================
     # Quiz Generation
@@ -155,6 +199,37 @@ class SourceGenerationService:
         
         logger.info(f"Quiz generated for source {source_id} by user {user_id}")
         return quiz
+
+    async def generate_notebook_quiz(
+        self,
+        notebook_id: str,
+        user_id: str,
+        topic: str,
+        num_questions: int = 10,
+        difficulty: str = "medium",
+    ) -> Quiz:
+        """Generate quiz from all sources in a notebook."""
+        content = await self._get_notebook_content(notebook_id)
+        
+        # Generate questions using LLM
+        questions = await self.llm_client.generate_quiz(
+            content=content,
+            num_questions=num_questions,
+            difficulty=difficulty,
+        )
+        
+        # Create quiz
+        quiz = await self.quiz_repo.create(
+            notebook_id=notebook_id,
+            user_id=user_id,
+            topic=topic,
+            questions_json=questions,
+            model="gpt-4",  # TODO: Get from config
+            metadata={"scope": "notebook", "difficulty": difficulty},
+        )
+        
+        logger.info(f"Quiz generated for notebook {notebook_id} by user {user_id}")
+        return quiz
     
     # ========================================================================
     # Study Guide Generation
@@ -201,6 +276,34 @@ class SourceGenerationService:
         )
         
         logger.info(f"Study guide generated for source {source_id} by user {user_id}")
+        return study_guide
+
+    async def generate_notebook_study_guide(
+        self,
+        notebook_id: str,
+        user_id: str,
+        topic: str,
+        format: str = "structured",
+    ) -> StudyGuide:
+        """Generate study guide from all sources in a notebook."""
+        content = await self._get_notebook_content(notebook_id)
+        
+        guide_content = await self.llm_client.generate_study_guide(
+            content=content,
+            topic=topic,
+            format=format,
+        )
+        
+        study_guide = await self.study_guide_repo.create(
+            notebook_id=notebook_id,
+            user_id=user_id,
+            topic=topic,
+            content=guide_content,
+            model="gpt-4",  # TODO: Get from config
+            metadata={"scope": "notebook", "format": format},
+        )
+        
+        logger.info(f"Study guide generated for notebook {notebook_id} by user {user_id}")
         return study_guide
     
     # ========================================================================
@@ -253,6 +356,41 @@ class SourceGenerationService:
             "mindmap": mindmap,
             "source_id": source_id,
             "source_title": source.title,
+            "format": format,
+            "history_id": history.id,
+        }
+
+    async def generate_notebook_mindmap(
+        self,
+        notebook_id: str,
+        user_id: str,
+        format: str = "json",
+    ) -> Dict[str, Any]:
+        """Generate mindmap from all sources in a notebook."""
+        content = await self._get_notebook_content(notebook_id)
+        
+        mindmap = await self.llm_client.generate_mindmap(
+            content=content,
+            format=format,
+        )
+        
+        # Store in generation_history
+        mindmap_content = json.dumps(mindmap) if isinstance(mindmap, dict) else str(mindmap)
+        history = await self.history_repo.create(
+            user_id=user_id,
+            history_type="mindmap",
+            title=f"Notebook Mindmap: {notebook_id}",
+            content=mindmap_content,
+            content_preview=mindmap_content[:200] if mindmap_content else "",
+            resource_id=notebook_id,
+            notebook_id=notebook_id,
+            metadata={"format": format, "scope": "notebook"},
+        )
+        
+        logger.info(f"Mindmap generated for notebook {notebook_id} by user {user_id}")
+        return {
+            "mindmap": mindmap,
+            "notebook_id": notebook_id,
             "format": format,
             "history_id": history.id,
         }

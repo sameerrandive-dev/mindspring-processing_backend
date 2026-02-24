@@ -73,10 +73,12 @@ A **Notebook** is a container for organizing learning materials and conversation
                      │
                      ▼
 ┌─────────────────────────────────────────────────────────┐
-│ 4. GENERATE QUIZZES/STUDY GUIDES                        │
-│    User creates quizzes and study guides                │
-│    - Based on notebook sources                          │
-│    - Uses notebook context                              │
+│ 4. GENERATE NOTEBOOK-WIDE ARTIFACTS                     │
+│    User creates artifacts from entire notebook          │
+│    - Notebook Summary (detailed/bullets)                │
+│    - Notebook Quiz (10-50 questions)                    │
+│    - Notebook Study Guide (structured/outline)          │
+│    - Notebook Mindmap (Mermaid/JSON)                    │
 └────────────────────┬────────────────────────────────────┘
                      │
                      ▼
@@ -137,6 +139,45 @@ PUT /api/v1/notebooks/{notebook_id}
     "description": "Updated description"
 }
 ```
+
+#### Notebook Generation (NotebookLM Features)
+
+```python
+# Generate notebook-wide summary
+POST /api/v1/notebooks/{notebook_id}/generate/summary
+{
+    "max_length": 1000,
+    "style": "detailed"
+}
+
+# Generate notebook-wide quiz
+POST /api/v1/notebooks/{notebook_id}/generate/quiz
+{
+    "topic": "Python Fundamentals",
+    "num_questions": 20,
+    "difficulty": "intermediate"
+}
+
+# Generate notebook-wide study guide
+POST /api/v1/notebooks/{notebook_id}/generate/guide
+{
+    "topic": "Exam 1 Prep",
+    "format": "structured"
+}
+
+# Generate notebook-wide mindmap
+POST /api/v1/notebooks/{notebook_id}/generate/mindmap
+{
+    "format": "mermaid"
+}
+```
+
+**Flow**:
+1. Aggregate all chunks from all sources in the notebook
+2. Pass combined context to LLM with specific instructions
+3. Save generated artifact in historical records/dedicated tables
+4. Return the generated discovery/learning tool
+
 
 #### Delete Notebook (Soft Delete)
 
@@ -463,7 +504,8 @@ User Action
 - **All sources** in a notebook share the same context
 - **All conversations** in a notebook can access all sources
 - **Chunks** are scoped to both notebook and source
-- **Quizzes** can be generated from notebook sources
+- **Quizzes and Study Guides** can be generated from the entire notebook context (all sources combined) or from a specific source.
+- **Notebook Intelligence**: The system can synthesize a "big picture" view of the entire notebook contents.
 
 ### Source Types
 

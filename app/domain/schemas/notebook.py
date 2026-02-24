@@ -42,3 +42,28 @@ class NotebookListResponse(BaseModel):
     """Schema for notebook list response."""
     notebooks: list[NotebookResponse]
     total: int
+
+
+class NotebookSummaryResponse(BaseModel):
+    summary: str
+    notebook_id: str
+    history_id: str
+    style: str
+
+
+class NotebookMindmapResponse(BaseModel):
+    mindmap: dict
+    notebook_id: str
+    format: str
+    history_id: str
+
+
+class NotebookQuizGenerateRequest(BaseModel):
+    topic: str
+    num_questions: int = 10
+    difficulty: str = "medium"
+
+
+class NotebookStudyGuideGenerateRequest(BaseModel):
+    topic: str
+    format: str = "structured"

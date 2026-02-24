@@ -147,80 +147,71 @@ async def send_message(
     If use_rag=True and conversation has source_id, uses RAG vector search.
     Otherwise, sends message without RAG context.
     """
-    try:
-        container = await get_service_container(db)
-        chat_service = container.get_chat_service()
-        chunk_repo = container.get_chunk_repository()
-        llm_client = container.llm_client
+    container = await get_service_container(db)
+    chat_service = container.get_chat_service()
+    chunk_repo = container.get_chunk_repository()
+    llm_client = container.llm_client
+    
+    # If RAG is enabled and role is user, use RAG service
+    if use_rag and role == "user":
+        # Verify conversation belongs to user first
+        conversation = await chat_service.get_conversation(conversation_id, current_user.id)
         
-        # If RAG is enabled and role is user, use RAG service
-        if use_rag and role == "user":
-            # Verify conversation belongs to user first
-            conversation = await chat_service.get_conversation(conversation_id, current_user.id)
-            
-            # Use RAG if enabled (will search entire notebook if source_id is None)
-            assistant_msg = await chat_service.send_message_with_rag(
-                conversation_id=conversation_id,
-                user_id=current_user.id,
-                user_message=content,
-                llm_client=llm_client,
-                chunk_repo=chunk_repo,
-            )
-            await db.commit()
-            await db.refresh(assistant_msg)
-            return {
-                "id": assistant_msg.id,
-                "conversation_id": assistant_msg.conversation_id,
-                "role": assistant_msg.role,
-                "content": assistant_msg.content,
-                "chunk_ids": assistant_msg.chunk_ids,
-                "created_at": assistant_msg.created_at.isoformat()
-            }
-        
-        # Fallback: regular message (Syntra Contextual Chat)
-        if role == "user":
-            assistant_msg = await chat_service.send_message_with_context(
-                conversation_id=conversation_id,
-                user_id=current_user.id,
-                user_message=content,
-                llm_client=llm_client,
-            )
-            await db.commit()
-            await db.refresh(assistant_msg)
-            return {
-                "id": assistant_msg.id,
-                "conversation_id": assistant_msg.conversation_id,
-                "role": assistant_msg.role,
-                "content": assistant_msg.content,
-                "created_at": assistant_msg.created_at.isoformat()
-            }
-        
-        # Original fallback for non-user messages (e.g. manual history injection)
-        message_id = str(uuid4())
-        message = Message(
-            id=message_id,
+        # Use RAG if enabled (will search entire notebook if source_id is None)
+        assistant_msg = await chat_service.send_message_with_rag(
             conversation_id=conversation_id,
-            role=role,
-            content=content
+            user_id=current_user.id,
+            user_message=content,
+            llm_client=llm_client,
+            chunk_repo=chunk_repo,
         )
-        db.add(message)
         await db.commit()
-        await db.refresh(message)
+        await db.refresh(assistant_msg)
         return {
-            "id": message.id,
-            "conversation_id": message.conversation_id,
-            "role": message.role,
-            "content": message.content,
-            "created_at": message.created_at.isoformat()
+            "id": assistant_msg.id,
+            "conversation_id": assistant_msg.conversation_id,
+            "role": assistant_msg.role,
+            "content": assistant_msg.content,
+            "chunk_ids": assistant_msg.chunk_ids,
+            "created_at": assistant_msg.created_at.isoformat()
         }
-    except DomainError as e:
-        await db.rollback()
-        e.log(logger)
-        raise HTTPException(status_code=e.http_status_code, detail=e.message)
-    except Exception as e:
-        await db.rollback()
-        logger.error(f"Unexpected error in send_message: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Internal server error")
+    
+    # Fallback: regular message (Syntra Contextual Chat)
+    if role == "user":
+        assistant_msg = await chat_service.send_message_with_context(
+            conversation_id=conversation_id,
+            user_id=current_user.id,
+            user_message=content,
+            llm_client=llm_client,
+        )
+        await db.commit()
+        await db.refresh(assistant_msg)
+        return {
+            "id": assistant_msg.id,
+            "conversation_id": assistant_msg.conversation_id,
+            "role": assistant_msg.role,
+            "content": assistant_msg.content,
+            "created_at": assistant_msg.created_at.isoformat()
+        }
+    
+    # Original fallback for non-user messages (e.g. manual history injection)
+    message_id = str(uuid4())
+    message = Message(
+        id=message_id,
+        conversation_id=conversation_id,
+        role=role,
+        content=content
+    )
+    db.add(message)
+    await db.commit()
+    await db.refresh(message)
+    return {
+        "id": message.id,
+        "conversation_id": message.conversation_id,
+        "role": message.role,
+        "content": message.content,
+        "created_at": message.created_at.isoformat()
+    }
 
 
 @router.get("/conversations/{conversation_id}/messages")
@@ -284,33 +275,24 @@ async def generate_summary_from_conversation(
     db: AsyncSession = Depends(get_db_session),
 ):
     """Generate summary from conversation."""
-    try:
-        chat_service = container.get_chat_service()
-        llm_client = container.llm_client
-        
-        summary = await chat_service.generate_summary_from_conversation(
-            conversation_id=conversation_id,
-            user_id=current_user.id,
-            llm_client=llm_client,
-            max_length=max_length,
-            style=style,
-        )
-        await db.commit()
-        
-        return {
-            "conversation_id": conversation_id,
-            "summary": summary,
-            "style": style,
-            "max_length": max_length,
-        }
-    except DomainError as e:
-        await db.rollback()
-        e.log(logger)
-        raise HTTPException(status_code=e.http_status_code, detail=e.message)
-    except Exception as e:
-        await db.rollback()
-        logger.error(f"Unexpected error in generate_summary_from_conversation: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Internal server error")
+    chat_service = container.get_chat_service()
+    llm_client = container.llm_client
+    
+    summary = await chat_service.generate_summary_from_conversation(
+        conversation_id=conversation_id,
+        user_id=current_user.id,
+        llm_client=llm_client,
+        max_length=max_length,
+        style=style,
+    )
+    await db.commit()
+    
+    return {
+        "conversation_id": conversation_id,
+        "summary": summary,
+        "style": style,
+        "max_length": max_length,
+    }
 
 
 @router.post("/conversations/{conversation_id}/generate/quiz")
@@ -324,35 +306,26 @@ async def generate_quiz_from_conversation(
     db: AsyncSession = Depends(get_db_session),
 ):
     """Generate quiz from conversation."""
-    try:
-        chat_service = container.get_chat_service()
-        llm_client = container.llm_client
-        
-        quiz = await chat_service.generate_quiz_from_conversation(
-            conversation_id=conversation_id,
-            user_id=current_user.id,
-            llm_client=llm_client,
-            topic=topic,
-            num_questions=num_questions,
-            difficulty=difficulty,
-        )
-        await db.commit()
-        
-        return {
-            "conversation_id": conversation_id,
-            "topic": topic,
-            "quiz": quiz,
-            "num_questions": num_questions,
-            "difficulty": difficulty,
-        }
-    except DomainError as e:
-        await db.rollback()
-        e.log(logger)
-        raise HTTPException(status_code=e.http_status_code, detail=e.message)
-    except Exception as e:
-        await db.rollback()
-        logger.error(f"Unexpected error in generate_quiz_from_conversation: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Internal server error")
+    chat_service = container.get_chat_service()
+    llm_client = container.llm_client
+    
+    quiz = await chat_service.generate_quiz_from_conversation(
+        conversation_id=conversation_id,
+        user_id=current_user.id,
+        llm_client=llm_client,
+        topic=topic,
+        num_questions=num_questions,
+        difficulty=difficulty,
+    )
+    await db.commit()
+    
+    return {
+        "conversation_id": conversation_id,
+        "topic": topic,
+        "quiz": quiz,
+        "num_questions": num_questions,
+        "difficulty": difficulty,
+    }
 
 
 @router.post("/conversations/{conversation_id}/generate/study-guide")
@@ -365,33 +338,24 @@ async def generate_study_guide_from_conversation(
     db: AsyncSession = Depends(get_db_session),
 ):
     """Generate study guide from conversation."""
-    try:
-        chat_service = container.get_chat_service()
-        llm_client = container.llm_client
-        
-        study_guide = await chat_service.generate_study_guide_from_conversation(
-            conversation_id=conversation_id,
-            user_id=current_user.id,
-            llm_client=llm_client,
-            topic=topic,
-            format=format,
-        )
-        await db.commit()
-        
-        return {
-            "conversation_id": conversation_id,
-            "topic": topic,
-            "format": format,
-            "study_guide": study_guide,
-        }
-    except DomainError as e:
-        await db.rollback()
-        e.log(logger)
-        raise HTTPException(status_code=e.http_status_code, detail=e.message)
-    except Exception as e:
-        await db.rollback()
-        logger.error(f"Unexpected error in generate_study_guide_from_conversation: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Internal server error")
+    chat_service = container.get_chat_service()
+    llm_client = container.llm_client
+    
+    study_guide = await chat_service.generate_study_guide_from_conversation(
+        conversation_id=conversation_id,
+        user_id=current_user.id,
+        llm_client=llm_client,
+        topic=topic,
+        format=format,
+    )
+    await db.commit()
+    
+    return {
+        "conversation_id": conversation_id,
+        "topic": topic,
+        "format": format,
+        "study_guide": study_guide,
+    }
 
 
 @router.post("/conversations/{conversation_id}/generate/mindmap")
@@ -403,31 +367,22 @@ async def generate_mindmap_from_conversation(
     db: AsyncSession = Depends(get_db_session),
 ):
     """Generate mindmap from conversation."""
-    try:
-        chat_service = container.get_chat_service()
-        llm_client = container.llm_client
-        
-        mindmap = await chat_service.generate_mindmap_from_conversation(
-            conversation_id=conversation_id,
-            user_id=current_user.id,
-            llm_client=llm_client,
-            format=format,
-        )
-        await db.commit()
-        
-        return {
-            "conversation_id": conversation_id,
-            "format": format,
-            "mindmap": mindmap,
-        }
-    except DomainError as e:
-        await db.rollback()
-        e.log(logger)
-        raise HTTPException(status_code=e.http_status_code, detail=e.message)
-    except Exception as e:
-        await db.rollback()
-        logger.error(f"Unexpected error in generate_mindmap_from_conversation: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Internal server error")
+    chat_service = container.get_chat_service()
+    llm_client = container.llm_client
+    
+    mindmap = await chat_service.generate_mindmap_from_conversation(
+        conversation_id=conversation_id,
+        user_id=current_user.id,
+        llm_client=llm_client,
+        format=format,
+    )
+    await db.commit()
+    
+    return {
+        "conversation_id": conversation_id,
+        "format": format,
+        "mindmap": mindmap,
+    }
 
 
 @router.post("/conversations/{conversation_id}/generate/flashcards")
@@ -439,31 +394,22 @@ async def generate_flashcards_from_conversation(
     db: AsyncSession = Depends(get_db_session),
 ):
     """Generate flashcards from conversation."""
-    try:
-        chat_service = container.get_chat_service()
-        llm_client = container.llm_client
-        
-        flashcards = await chat_service.generate_flashcards_from_conversation(
-            conversation_id=conversation_id,
-            user_id=current_user.id,
-            llm_client=llm_client,
-            topic=topic,
-        )
-        await db.commit()
-        
-        return {
-            "conversation_id": conversation_id,
-            "topic": topic,
-            "flashcards": flashcards,
-        }
-    except DomainError as e:
-        await db.rollback()
-        e.log(logger)
-        raise HTTPException(status_code=e.http_status_code, detail=e.message)
-    except Exception as e:
-        await db.rollback()
-        logger.error(f"Unexpected error in generate_flashcards_from_conversation: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Internal server error")
+    chat_service = container.get_chat_service()
+    llm_client = container.llm_client
+    
+    flashcards = await chat_service.generate_flashcards_from_conversation(
+        conversation_id=conversation_id,
+        user_id=current_user.id,
+        llm_client=llm_client,
+        topic=topic,
+    )
+    await db.commit()
+    
+    return {
+        "conversation_id": conversation_id,
+        "topic": topic,
+        "flashcards": flashcards,
+    }
 
 
 # ============================================================================
@@ -480,72 +426,64 @@ async def export_conversation(
     db: AsyncSession = Depends(get_db_session),
 ):
     """Export conversation in various formats."""
-    try:
-        # First get the conversation and its messages
-        chat_service = container.get_chat_service()
+    # First get the conversation and its messages
+    chat_service = container.get_chat_service()
+    
+    # Get conversation details
+    conversation = await chat_service.get_conversation(conversation_id, current_user.id)
+    messages = await chat_service.get_conversation_messages(
+        conversation_id, current_user.id
+    )
+    
+    # Prepare export data
+    export_data = {
+        "id": conversation.id,
+        "title": conversation.title,
+        "mode": conversation.mode,
+        "created_at": conversation.created_at.isoformat(),
+        "updated_at": conversation.updated_at.isoformat(),
+        "messages": [
+            {
+                "id": msg.id,
+                "role": msg.role,
+                "content": msg.content,
+                "created_at": msg.created_at.isoformat(),
+            }
+            for msg in messages
+        ]
+    }
+    
+    if format == "json":
+        return export_data
+    elif format == "text":
+        # Create a text representation
+        text_content = f"Conversation: {conversation.title}\n"
+        text_content += f"Mode: {conversation.mode}\n"
+        text_content += f"Date: {conversation.created_at.isoformat()}\n\n"
         
-        # Get conversation details
-        conversation = await chat_service.get_conversation(conversation_id, current_user.id)
-        messages = await chat_service.get_conversation_messages(
-            conversation_id, current_user.id
-        )
+        for msg in messages:
+            text_content += f"{msg.role.upper()}: {msg.content}\n\n"
         
-        # Prepare export data
-        export_data = {
-            "id": conversation.id,
-            "title": conversation.title,
-            "mode": conversation.mode,
-            "created_at": conversation.created_at.isoformat(),
-            "updated_at": conversation.updated_at.isoformat(),
-            "messages": [
-                {
-                    "id": msg.id,
-                    "role": msg.role,
-                    "content": msg.content,
-                    "created_at": msg.created_at.isoformat(),
-                }
-                for msg in messages
-            ]
+        return {
+            "format": "text",
+            "content": text_content
         }
+    elif format == "markdown":
+        # Create a markdown representation
+        md_content = f"# {conversation.title}\n\n"
+        md_content += f"**Mode**: {conversation.mode}\n"
+        md_content += f"**Date**: {conversation.created_at.isoformat()}\n\n"
         
-        if format == "json":
-            return export_data
-        elif format == "text":
-            # Create a text representation
-            text_content = f"Conversation: {conversation.title}\n"
-            text_content += f"Mode: {conversation.mode}\n"
-            text_content += f"Date: {conversation.created_at.isoformat()}\n\n"
-            
-            for msg in messages:
-                text_content += f"{msg.role.upper()}: {msg.content}\n\n"
-            
-            return {
-                "format": "text",
-                "content": text_content
-            }
-        elif format == "markdown":
-            # Create a markdown representation
-            md_content = f"# {conversation.title}\n\n"
-            md_content += f"**Mode**: {conversation.mode}\n"
-            md_content += f"**Date**: {conversation.created_at.isoformat()}\n\n"
-            
-            for msg in messages:
-                role_marker = "**User:**" if msg.role == "user" else "**Assistant:**"
-                md_content += f"## {role_marker}\n{msg.content}\n\n"
-            
-            return {
-                "format": "markdown",
-                "content": md_content
-            }
-        else:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Unsupported format: {format}. Supported formats: json, text, markdown"
-            )
-            
-    except DomainError as e:
-        e.log(logger)
-        raise HTTPException(status_code=e.http_status_code, detail=e.message)
-    except Exception as e:
-        logger.error(f"Unexpected error in export_conversation: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Internal server error")
+        for msg in messages:
+            role_marker = "**User:**" if msg.role == "user" else "**Assistant:**"
+            md_content += f"## {role_marker}\n{msg.content}\n\n"
+        
+        return {
+            "format": "markdown",
+            "content": md_content
+        }
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported format: {format}. Supported formats: json, text, markdown"
+        )

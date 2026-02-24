@@ -106,6 +106,7 @@ class Settings(BaseSettings):
     # Task settings
     TASK_TIMEOUT_SECONDS: int = 300
     DOCUMENT_PROCESSING_TIMEOUT: int = 1800
+    REQUEST_TIMEOUT_SECONDS: float = 30.0
     
     # External services
     OPENAI_API_KEY: Optional[str] = None

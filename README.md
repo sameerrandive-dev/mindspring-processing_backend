@@ -187,9 +187,9 @@ MindSpring is architected for high-scale, production environments, having underg
 
 ## ✨ Key Features
 
-### 1. **Advanced Multi-Source RAG Engine**
+### 1. **Advanced Multi-Source RAG Engine (NotebookLM Power)**
 - **Semantic Search**: Powered by `pgvector` for high-speed, accurate retrieval across multiple documents simultaneously.
-- **Cross-Document Synthesis**: Answers queries by combining context from all sources in a notebook.
+- **Cross-Document Synthesis**: Answers queries by combining context from all sources in a notebook. The AI "intelligence" is grounded in your specific notebook context.
 - **Auto-Chunking**: Intelligent document splitting with configurable overlap for better context retention.
 - **OCR/PDF Processing**: Asynchronous extraction from PDFs and various text formats using a job-based architecture.
 
@@ -200,10 +200,12 @@ MindSpring is architected for high-scale, production environments, having underg
     - **RAG Mode**: Precision answers grounded in your uploaded documents (single source or entire notebook) with citations.
     - **Chat Mode**: General conversational AI using only message history.
 
-### 3. **Smart Learning Tools**
-- **Autonomous Quizzes**: Generate context-specific quizzes from your study material.
-- **Study Guides**: AI-driven synthesis of notebooks into structured study plans.
-- **Notebook Organization**: Group sources and conversations by subject or project.
+### 3. **NotebookLM-Style Learning Tools**
+- **Notebook-Wide Intelligence**: Generate context-specific artifacts from an entire notebook (multiple documents combined) with a single click.
+- **Autonomous Quizzes**: Generate context-specific quizzes (10-50 questions) from your entire study material.
+- **Synthesized Study Guides**: AI-driven synthesis of notebooks into structured study plans, outlines, or detailed guides.
+- **Visual Mindmaps**: Transform complex document relationships into interactive mindmaps (JSON/Mermaid/Markdown).
+- **Notebook Summarization**: Detailed summaries that aggregate knowledge across all uploaded sources.
 
 ### 4. **Enterprise Infrastructure**
 - **Layered Clean Architecture**: Decoupled domain logic following DDD principles.

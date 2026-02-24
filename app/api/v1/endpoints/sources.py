@@ -196,217 +196,204 @@ async def add_source_to_notebook(
     
     results = []
     
-    try:
-        # Handle bulk/single file uploads
-        if upload_list:
-            for upload in upload_list:
-                source_type = get_file_type(upload.filename or "", upload.content_type or "")
-                source_title = upload.filename or "Untitled Document"
-                
-                # Metadata for this source
-                metadata: dict = {
-                    "uploadedBy": current_user.id,
-                    "fileSize": upload.size,
-                    "mimeType": upload.content_type,
-                }
-                
-                # Validate type and size
-                allowed_types = ["application/pdf", "text/plain", "text/markdown"]
-                file_ext = (upload.filename or "").split('.')[-1].lower() if '.' in (upload.filename or "") else ''
-                
-                if upload.content_type not in allowed_types and file_ext not in ['pdf', 'txt', 'md']:
-                    logger.warning(f"Skipping file {upload.filename}: Unsupported type")
-                    continue # Skip unsupported files in a bulk batch
+    # Handle bulk/single file uploads
+    if upload_list:
+        for upload in upload_list:
+            source_type = get_file_type(upload.filename or "", upload.content_type or "")
+            source_title = upload.filename or "Untitled Document"
+            
+            # Metadata for this source
+            metadata: dict = {
+                "uploadedBy": current_user.id,
+                "fileSize": upload.size,
+                "mimeType": upload.content_type,
+            }
+            
+            # Validate type and size
+            allowed_types = ["application/pdf", "text/plain", "text/markdown"]
+            file_ext = (upload.filename or "").split('.')[-1].lower() if '.' in (upload.filename or "") else ''
+            
+            if upload.content_type not in allowed_types and file_ext not in ['pdf', 'txt', 'md']:
+                logger.warning(f"Skipping file {upload.filename}: Unsupported type")
+                continue # Skip unsupported files in a bulk batch
 
-                if upload.size > 50 * 1024 * 1024:
-                    logger.warning(f"Skipping file {upload.filename}: Exceeds 50MB")
-                    continue
+            if upload.size > 50 * 1024 * 1024:
+                logger.warning(f"Skipping file {upload.filename}: Exceeds 50MB")
+                continue
 
-                # Read and storage
-                file_content = await upload.read()
-                source_id = str(uuid.uuid4())
-                timestamp = int(time.time() * 1000)
-                storage_key = f"{current_user.id}/notebooks/{notebook_id}/sources/{timestamp}-{upload.filename}"
+            # Read and storage
+            file_content = await upload.read()
+            source_id = str(uuid.uuid4())
+            timestamp = int(time.time() * 1000)
+            storage_key = f"{current_user.id}/notebooks/{notebook_id}/sources/{timestamp}-{upload.filename}"
+            
+            storage_provider = container.storage_provider
+            stored_key = await storage_provider.store(
+                key=storage_key,
+                content=file_content,
+                metadata={
+                    "filename": upload.filename,
+                    "user_id": str(current_user.id),
+                    "notebook_id": notebook_id,
+                },
+            )
+            
+            # Create record
+            from app.domain.models.source import Source
+            source = Source(
+                id=source_id,
+                notebook_id=notebook_id,
+                type=source_type,
+                title=source_title,
+                file_path=stored_key,
+                metadata_=metadata,
+                status="processing",
+            )
+            db.add(source)
+            
+            # Background task closure
+            async def process_task(sid=source_id, skey=storage_key):
+                logger.info(f"🚀 Bulk processing task started for source {sid}")
+                async with AsyncSessionFactory() as bg_db:
+                    try:
+                        bg_container = ServiceContainer(db=bg_db)
+                        svc = bg_container.get_source_processing_service()
+                        await svc.process_source_file(source_id=sid, storage_key=skey)
+                        await bg_db.commit()
+                        logger.info(f"🎉 Bulk processing completed for source {sid}")
+                    except Exception as e:
+                        logger.error(f"❌ Bulk source processing error for {sid}: {e}")
+            
+            background_tasks.add_task(process_task)
+            results.append({"id": source_id, "title": source_title, "status": "processing"})
+
+        await db.commit()
+        
+        return {
+            "success": True,
+            "data": results,
+            "meta": {"count": len(results), "timestamp": datetime.utcnow().isoformat()},
+        }
+    
+    # Handle URL source
+    elif url:
+        source_type = "url"
+        source_title = url
+        
+        try:
+            url_content = await extract_text_from_url(url)
+            content = url_content["text"]
+            if url_content.get("title"):
+                source_title = url_content["title"]
+        except ValueError as e:
+            logger.error(f"URL extraction failed: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(e)
+            )
+        except Exception as e:
+            logger.error(f"URL extraction error: {e}", exc_info=True)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Failed to extract content from URL: {str(e)}"
+            )
+    
+    # Handle text source
+    elif text:
+        source_type = "text"
+        source_title = title or "Text Document"
+        try:
+            content = process_text_content(text)
+        except ValueError as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(e)
+            )
+    
+    # Validate content
+    if not content or not content.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No content extracted from source"
+        )
+    
+    # Create source record for URL/text sources
+    from app.domain.models.source import Source
+    source_id = str(uuid.uuid4())
+    source = Source(
+        id=source_id,
+        notebook_id=notebook_id,
+        type=source_type,
+        title=source_title,
+        original_url=url if url else None,
+        file_path=None,
+        metadata_=metadata,
+        status="processing",
+    )
+    db.add(source)
+    await db.flush()
+    await db.commit()
+    await db.refresh(source)
+    
+    # Process content in background (chunk and embed)
+    async def process_content_in_background():
+        """Process source content in background."""
+        logger.info(f"🚀 Background task started for source {source_id}")
+        logger.info(f"📂 Processing content: {len(content)} characters")
+        
+        async with AsyncSessionFactory() as bg_db:
+            try:
+                bg_container = ServiceContainer(db=bg_db)
+                rag_ingest_service = bg_container.get_rag_ingest_service()
+                source_repo = bg_container.get_source_repository()
                 
-                storage_provider = container.storage_provider
-                stored_key = await storage_provider.store(
-                    key=storage_key,
-                    content=file_content,
+                # Chunk and generate embeddings
+                logger.info(f"🧠 Starting RAG ingestion for source {source_id}")
+                chunks = await rag_ingest_service.ingest_document(
+                    source_id=source_id,
+                    notebook_id=notebook_id,
+                    document_text=content,
                     metadata={
-                        "filename": upload.filename,
-                        "user_id": str(current_user.id),
-                        "notebook_id": notebook_id,
+                        "title": source_title,
+                        "type": source_type,
+                        **metadata,
                     },
                 )
                 
-                # Create record
-                from app.domain.models.source import Source
-                source = Source(
-                    id=source_id,
-                    notebook_id=notebook_id,
-                    type=source_type,
-                    title=source_title,
-                    file_path=stored_key,
-                    metadata_=metadata,
-                    status="processing",
-                )
-                db.add(source)
-                
-                # Background task closure
-                async def process_task(sid=source_id, skey=storage_key):
-                    logger.info(f"🚀 Bulk processing task started for source {sid}")
-                    async with AsyncSessionFactory() as bg_db:
-                        try:
-                            bg_container = ServiceContainer(db=bg_db)
-                            svc = bg_container.get_source_processing_service()
-                            await svc.process_source_file(source_id=sid, storage_key=skey)
-                            await bg_db.commit()
-                            logger.info(f"🎉 Bulk processing completed for source {sid}")
-                        except Exception as e:
-                            logger.error(f"❌ Bulk source processing error for {sid}: {e}")
-                
-                background_tasks.add_task(process_task)
-                results.append({"id": source_id, "title": source_title, "status": "processing"})
-
-            await db.commit()
-            
-            return {
-                "success": True,
-                "data": results,
-                "meta": {"count": len(results), "timestamp": datetime.utcnow().isoformat()},
-            }
-        
-        # Handle URL source
-        elif url:
-            source_type = "url"
-            source_title = url
-            
-            try:
-                url_content = await extract_text_from_url(url)
-                content = url_content["text"]
-                if url_content.get("title"):
-                    source_title = url_content["title"]
-            except ValueError as e:
-                logger.error(f"URL extraction failed: {e}")
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=str(e)
-                )
+                # Update source status to completed
+                logger.info(f"🏁 Updating source {source_id} status to completed")
+                await source_repo.update(source_id, status="completed")
+                await bg_db.commit()
+                logger.info(f"🎉 Background processing completed successfully for source {source_id}")
+                logger.info(f"📊 Final summary for {source_id}: {len(chunks)} chunks created")
             except Exception as e:
-                logger.error(f"URL extraction error: {e}", exc_info=True)
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Failed to extract content from URL: {str(e)}"
-                )
-        
-        # Handle text source
-        elif text:
-            source_type = "text"
-            source_title = title or "Text Document"
-            try:
-                content = process_text_content(text)
-            except ValueError as e:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=str(e)
-                )
-        
-        # Validate content
-        if not content or not content.strip():
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="No content extracted from source"
-            )
-        
-        # Create source record for URL/text sources
-        from app.domain.models.source import Source
-        source_id = str(uuid.uuid4())
-        source = Source(
-            id=source_id,
-            notebook_id=notebook_id,
-            type=source_type,
-            title=source_title,
-            original_url=url if url else None,
-            file_path=None,
-            metadata_=metadata,
-            status="processing",
-        )
-        db.add(source)
-        await db.flush()
-        await db.commit()
-        await db.refresh(source)
-        
-        # Process content in background (chunk and embed)
-        async def process_content_in_background():
-            """Process source content in background."""
-            logger.info(f"🚀 Background task started for source {source_id}")
-            logger.info(f"📂 Processing content: {len(content)} characters")
-            
-            async with AsyncSessionFactory() as bg_db:
+                await bg_db.rollback()
+                logger.error(f"❌ Background processing failed for source {source_id}: {e}", exc_info=True)
                 try:
-                    bg_container = ServiceContainer(db=bg_db)
-                    rag_ingest_service = bg_container.get_rag_ingest_service()
-                    source_repo = bg_container.get_source_repository()
-                    
-                    # Chunk and generate embeddings
-                    logger.info(f"🧠 Starting RAG ingestion for source {source_id}")
-                    chunks = await rag_ingest_service.ingest_document(
-                        source_id=source_id,
-                        notebook_id=notebook_id,
-                        document_text=content,
-                        metadata={
-                            "title": source_title,
-                            "type": source_type,
-                            **metadata,
-                        },
-                    )
-                    
-                    # Update source status to completed
-                    logger.info(f"🏁 Updating source {source_id} status to completed")
-                    await source_repo.update(source_id, status="completed")
+                    await source_repo.update(source_id, status="failed")
                     await bg_db.commit()
-                    logger.info(f"🎉 Background processing completed successfully for source {source_id}")
-                    logger.info(f"📊 Final summary for {source_id}: {len(chunks)} chunks created")
-                except Exception as e:
-                    await bg_db.rollback()
-                    logger.error(f"❌ Background processing failed for source {source_id}: {e}", exc_info=True)
-                    try:
-                        await source_repo.update(source_id, status="failed")
-                        await bg_db.commit()
-                        logger.error(f"❌ Source {source_id} marked as failed")
-                    except Exception as update_error:
-                        logger.error(f"❌ Failed to update source {source_id} status to failed: {update_error}")
-        
-        background_tasks.add_task(process_content_in_background)
-        
-        logger.info(f"Source {source_id} created and background processing queued")
-        
-        # Return Next.js format response
-        return {
-            "success": True,
-            "data": {
-                "sourceId": source.id,
-                "sourceTitle": source.title,
-                "status": source.status,
-                "message": "Source uploaded successfully. Processing in background...",
-            },
-            "meta": {
-                "version": "v1",
-                "timestamp": datetime.utcnow().isoformat(),
-            },
-        }
-        
-    except HTTPException:
-        await db.rollback()
-        raise
-    except DomainError as e:
-        await db.rollback()
-        e.log(logger)
-        raise HTTPException(status_code=e.http_status_code, detail=e.message)
-    except Exception as e:
-        await db.rollback()
-        logger.error(f"Unexpected error in add_source_to_notebook: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Internal server error")
+                    logger.error(f"❌ Source {source_id} marked as failed")
+                except Exception as update_error:
+                    logger.error(f"❌ Failed to update source {source_id} status to failed: {update_error}")
+    
+    background_tasks.add_task(process_content_in_background)
+    
+    logger.info(f"Source {source_id} created and background processing queued")
+    
+    # Return Next.js format response
+    return {
+        "success": True,
+        "data": {
+            "sourceId": source.id,
+            "sourceTitle": source.title,
+            "status": source.status,
+            "message": "Source uploaded successfully. Processing in background...",
+        },
+        "meta": {
+            "version": "v1",
+            "timestamp": datetime.utcnow().isoformat(),
+        },
+    }
 
 
 @router.get("/notebooks/{notebook_id}/sources", response_model=List[SourceResponse])
@@ -440,23 +427,14 @@ async def generate_summary(
     db: AsyncSession = Depends(get_db_session),
 ):
     """Generate summary from source."""
-    try:
-        result = await service.generate_summary(
-            source_id=source_id,
-            user_id=current_user.id,
-            max_length=max_length,
-            style=style,
-        )
-        await db.commit()
-        return SummaryResponse(**result)
-    except DomainError as e:
-        await db.rollback()
-        e.log(logger)
-        raise HTTPException(status_code=e.http_status_code, detail=e.message)
-    except Exception as e:
-        await db.rollback()
-        logger.error(f"Unexpected error in generate_summary: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Internal server error")
+    result = await service.generate_summary(
+        source_id=source_id,
+        user_id=current_user.id,
+        max_length=max_length,
+        style=style,
+    )
+    await db.commit()
+    return SummaryResponse(**result)
 
 
 @router.post("/sources/{source_id}/generate/quiz")
@@ -468,33 +446,24 @@ async def generate_quiz(
     db: AsyncSession = Depends(get_db_session),
 ):
     """Generate quiz from source."""
-    try:
-        quiz = await service.generate_quiz(
-            source_id=source_id,
-            user_id=current_user.id,
-            topic=request.topic,
-            num_questions=request.num_questions,
-            difficulty=request.difficulty,
-        )
-        await db.commit()
-        await db.refresh(quiz)
-        return {
-            "id": quiz.id,
-            "notebook_id": quiz.notebook_id,
-            "topic": quiz.topic,
-            "questions": quiz.questions,
-            "model": quiz.model,
-            "version": quiz.version,
-            "created_at": quiz.created_at.isoformat(),
-        }
-    except DomainError as e:
-        await db.rollback()
-        e.log(logger)
-        raise HTTPException(status_code=e.http_status_code, detail=e.message)
-    except Exception as e:
-        await db.rollback()
-        logger.error(f"Unexpected error in generate_quiz: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Internal server error")
+    quiz = await service.generate_quiz(
+        source_id=source_id,
+        user_id=current_user.id,
+        topic=request.topic,
+        num_questions=request.num_questions,
+        difficulty=request.difficulty,
+    )
+    await db.commit()
+    await db.refresh(quiz)
+    return {
+        "id": quiz.id,
+        "notebook_id": quiz.notebook_id,
+        "topic": quiz.topic,
+        "questions": quiz.questions,
+        "model": quiz.model,
+        "version": quiz.version,
+        "created_at": quiz.created_at.isoformat(),
+    }
 
 
 @router.post("/sources/{source_id}/generate/guide")
@@ -506,32 +475,23 @@ async def generate_study_guide(
     db: AsyncSession = Depends(get_db_session),
 ):
     """Generate study guide from source."""
-    try:
-        guide = await service.generate_study_guide(
-            source_id=source_id,
-            user_id=current_user.id,
-            topic=request.topic,
-            format=request.format,
-        )
-        await db.commit()
-        await db.refresh(guide)
-        return {
-            "id": guide.id,
-            "notebook_id": guide.notebook_id,
-            "topic": guide.topic,
-            "content": guide.content,
-            "model": guide.model,
-            "version": guide.version,
-            "created_at": guide.created_at.isoformat(),
-        }
-    except DomainError as e:
-        await db.rollback()
-        e.log(logger)
-        raise HTTPException(status_code=e.http_status_code, detail=e.message)
-    except Exception as e:
-        await db.rollback()
-        logger.error(f"Unexpected error in generate_study_guide: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Internal server error")
+    guide = await service.generate_study_guide(
+        source_id=source_id,
+        user_id=current_user.id,
+        topic=request.topic,
+        format=request.format,
+    )
+    await db.commit()
+    await db.refresh(guide)
+    return {
+        "id": guide.id,
+        "notebook_id": guide.notebook_id,
+        "topic": guide.topic,
+        "content": guide.content,
+        "model": guide.model,
+        "version": guide.version,
+        "created_at": guide.created_at.isoformat(),
+    }
 
 
 @router.post("/sources/{source_id}/generate/mindmap", response_model=MindmapResponse)
@@ -543,22 +503,13 @@ async def generate_mindmap(
     db: AsyncSession = Depends(get_db_session),
 ):
     """Generate mindmap from source."""
-    try:
-        result = await service.generate_mindmap(
-            source_id=source_id,
-            user_id=current_user.id,
-            format=format,
-        )
-        await db.commit()
-        return MindmapResponse(**result)
-    except DomainError as e:
-        await db.rollback()
-        e.log(logger)
-        raise HTTPException(status_code=e.http_status_code, detail=e.message)
-    except Exception as e:
-        await db.rollback()
-        logger.error(f"Unexpected error in generate_mindmap: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Internal server error")
+    result = await service.generate_mindmap(
+        source_id=source_id,
+        user_id=current_user.id,
+        format=format,
+    )
+    await db.commit()
+    return MindmapResponse(**result)
 
 
 @router.post("/sources/{source_id}/conversations")
@@ -572,42 +523,33 @@ async def create_source_conversation(
     db: AsyncSession = Depends(get_db_session),
 ):
     """Create conversation based on source."""
-    try:
-        # Get source to get notebook_id
-        source_repo = container.get_source_repository()
-        source = await source_repo.get_by_id(source_id)
-        
-        if not source:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Source {source_id} not found"
-            )
-        
-        conversation = await chat_service.create_conversation(
-            notebook_id=source.notebook_id,
-            user_id=current_user.id,
-            title=title or f"Chat about {source.title}",
-            mode=mode,
-            source_id=source_id,
+    # Get source to get notebook_id
+    source_repo = container.get_source_repository()
+    source = await source_repo.get_by_id(source_id)
+    
+    if not source:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Source {source_id} not found"
         )
-        await db.commit()
-        await db.refresh(conversation)
-        return {
-            "id": conversation.id,
-            "notebook_id": conversation.notebook_id,
-            "source_id": conversation.source_id,
-            "title": conversation.title,
-            "mode": conversation.mode,
-            "created_at": conversation.created_at.isoformat(),
-        }
-    except DomainError as e:
-        await db.rollback()
-        e.log(logger)
-        raise HTTPException(status_code=e.http_status_code, detail=e.message)
-    except Exception as e:
-        await db.rollback()
-        logger.error(f"Unexpected error in create_source_conversation: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Internal server error")
+    
+    conversation = await chat_service.create_conversation(
+        notebook_id=source.notebook_id,
+        user_id=current_user.id,
+        title=title or f"Chat about {source.title}",
+        mode=mode,
+        source_id=source_id,
+    )
+    await db.commit()
+    await db.refresh(conversation)
+    return {
+        "id": conversation.id,
+        "notebook_id": conversation.notebook_id,
+        "source_id": conversation.source_id,
+        "title": conversation.title,
+        "mode": conversation.mode,
+        "created_at": conversation.created_at.isoformat(),
+    }
 
 
 # ============================================================================
@@ -627,22 +569,13 @@ async def generate_mindmap_from_text(
     Send any concept or description and receive a structured mindmap
     in JSON, Mermaid, or Markdown format.
     """
-    try:
-        result = await service.generate_mindmap_from_text(
-            text=request.text,
-            user_id=current_user.id,
-            format=request.format,
-        )
-        await db.commit()
-        return MindmapResponse(**result)
-    except DomainError as e:
-        await db.rollback()
-        e.log(logger)
-        raise HTTPException(status_code=e.http_status_code, detail=e.message)
-    except Exception as e:
-        await db.rollback()
-        logger.error(f"Unexpected error in generate_mindmap_from_text: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Internal server error")
+    result = await service.generate_mindmap_from_text(
+        text=request.text,
+        user_id=current_user.id,
+        format=request.format,
+    )
+    await db.commit()
+    return MindmapResponse(**result)
 
 
 # ============================================================================
@@ -667,32 +600,23 @@ async def create_node_conversation(
     is set to 'tutor' mode for in-depth learning about that concept.
     The history_id links this thread back to the parent mindmap.
     """
-    try:
-        conversation = await chat_service.create_conversation(
-            notebook_id=notebook_id,
-            user_id=current_user.id,
-            title=title or f"Exploring: {node_label}",
-            mode="tutor",
-            source_id=None,
-        )
-        await db.commit()
-        await db.refresh(conversation)
+    conversation = await chat_service.create_conversation(
+        notebook_id=notebook_id,
+        user_id=current_user.id,
+        title=title or f"Exploring: {node_label}",
+        mode="tutor",
+        source_id=None,
+    )
+    await db.commit()
+    await db.refresh(conversation)
 
-        return {
-            "id": conversation.id,
-            "notebook_id": conversation.notebook_id,
-            "node_id": node_id,
-            "node_label": node_label,
-            "mindmap_history_id": history_id,
-            "mode": conversation.mode,
-            "title": conversation.title,
-            "created_at": conversation.created_at.isoformat(),
-        }
-    except DomainError as e:
-        await db.rollback()
-        e.log(logger)
-        raise HTTPException(status_code=e.http_status_code, detail=e.message)
-    except Exception as e:
-        await db.rollback()
-        logger.error(f"Unexpected error in create_node_conversation: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Internal server error")
+    return {
+        "id": conversation.id,
+        "notebook_id": conversation.notebook_id,
+        "node_id": node_id,
+        "node_label": node_label,
+        "mindmap_history_id": history_id,
+        "mode": conversation.mode,
+        "title": conversation.title,
+        "created_at": conversation.created_at.isoformat(),
+    }
