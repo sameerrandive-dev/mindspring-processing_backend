@@ -47,17 +47,27 @@ class SMTPEmailProvider(IEmailProvider):
                 part2 = MIMEText(html_content, "html")
                 message.attach(part2)
                 
-                # Send email with 10s timeout
-                with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=10) as server:
-                    # Check if we should use STARTTLS (usually for port 587)
-                    if settings.SMTP_PORT == 587:
+                # Determine protocol based on port
+                port = int(settings.SMTP_PORT)
+                host = settings.SMTP_HOST
+                
+                if port == 465:
+                    # Use SSL for port 465
+                    server_class = smtplib.SMTP_SSL
+                else:
+                    # Use standard SMTP for others (STARTTLS will be used for 587)
+                    server_class = smtplib.SMTP
+
+                with server_class(host, port, timeout=10) as server:
+                    # Use STARTTLS for port 587 or if explicitly requested
+                    if port == 587:
                         server.starttls()
                     
                     server.login(settings.SMTP_USERNAME, settings.SMTP_PASSWORD)
                     server.send_message(message)
                 return True
             except Exception as e:
-                logger.error(f"Sync SMTP send failed: {e}")
+                logger.error(f"Sync SMTP send failed: {str(e)}")
                 raise e
 
         try:
