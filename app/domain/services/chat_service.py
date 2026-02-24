@@ -2,7 +2,7 @@
 
 import logging
 import asyncio
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 
 from app.domain.models.conversation import Conversation
 from app.domain.models.message import Message

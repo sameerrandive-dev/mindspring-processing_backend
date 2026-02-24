@@ -26,7 +26,7 @@ db_url = get_async_db_url(str(settings.DATABASE_URL))
 if "?" in db_url:
     db_url = db_url.split("?")[0]
 
-print(f"DEBUG: Using DATABASE_URL (stripped): {db_url}")
+
 
 engine = create_async_engine(
     db_url,
@@ -56,20 +56,20 @@ AsyncSessionFactory = async_sessionmaker(
 
 async def get_db_session() -> AsyncSession:
     """Dependency to get database session."""
-    print("DEBUG: Entering get_db_session")
+
     async with AsyncSessionFactory() as session:
-        print("DEBUG: Got session from factory")
+
         try:
             yield session
             await session.commit()
-            print("DEBUG: Transaction committed")
+
         except Exception as e:
-            print(f"DEBUG: Exception in get_db_session: {e}")
+
             await session.rollback()
-            print("DEBUG: Transaction rolled back")
+
             raise e
         finally:
-            print("DEBUG: Closing session")
+
             await session.close()
 
 
@@ -88,6 +88,10 @@ async def init_db():
     )
     
     async with engine.begin() as conn:
+        # Enable pgvector extension
+        from sqlalchemy import text
+        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+        
         # Create tables if they don't exist
         await conn.run_sync(Base.metadata.create_all)
 

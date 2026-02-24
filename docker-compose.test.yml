@@ -5,10 +5,12 @@ services:
     build: .
     ports:
       - "8000:8000"
+    env_file:
+      - .env # This automatically pulls EVERYTHING (AI, S3, SMTP) into Docker  
     environment:
-      - DATABASE_URL=postgresql://user:password@postgres:5432/mindspring
+      - DATABASE_URL=postgresql+asyncpg://user:password@postgres:5432/mindspring
       - REDIS_URL=redis://redis:6379
-      - SECRET_KEY=test-secret-key-change-in-production
+      - SECRET_KEY=5EuV5BoYDJI9RlvAT8TH8Xs9
       - PORT=8000
       - DEBUG=True
       # Add other required environment variables as needed
@@ -22,17 +24,16 @@ services:
       - .:/app
 
   postgres:
-    image: postgres:15
+    image: ankane/pgvector:latest
     environment:
       - POSTGRES_DB=mindspring
       - POSTGRES_USER=user
       - POSTGRES_PASSWORD=password
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    # Enable pgvector extension
-    command: postgres -c shared_preload_libraries=vector
+    # pgvector extension is pre-installed in this image
 
   redis:
     image: redis:7-alpine
